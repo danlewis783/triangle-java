@@ -1,0 +1,8 @@
+# https://docs.gradle.org/current/userguide/version_catalogs.html#sec::toml-dependencies-format
+
+[versions]
+assertj = "3.27.3"
+junit-jupiter = "5.11.4"
+
+[libraries]
+assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
