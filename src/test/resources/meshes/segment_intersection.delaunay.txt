@@ -1,0 +1,17 @@
+numberofpoints 4
+numberofcorners 3
+numberoftriangles 2
+numberoftriangleattributes 0
+numberofsegments 4
+numberofedges 5
+points
+0 0 0
+1 4 0
+2 4 4
+3 0 4
+triangles
+0 3 0 1
+1 1 2 3
+neighbors
+0 -1 1 -1
+1 -1 0 -1
