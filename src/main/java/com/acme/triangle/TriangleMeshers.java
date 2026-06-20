@@ -1,6 +1,7 @@
 package com.acme.triangle;
 
 import com.acme.triangle.impl.DifferentialTriangleMesher;
+import com.acme.triangle.impl.JavaTriangleMesher;
 import com.acme.triangle.impl.NativeTriangleMesher;
 import com.acme.triangle.impl.ValidatingTriangleMesher;
 
@@ -17,6 +18,11 @@ public final class TriangleMeshers {
     /** The native (JNA) Triangle implementation. */
     public static TriangleMesher nativeMesher() {
         return new NativeTriangleMesher();
+    }
+
+    /** The pure-Java implementation (constrained Delaunay + Ruppert refinement). */
+    public static TriangleMesher javaMesher() {
+        return new JavaTriangleMesher();
     }
 
     /** Wrap a mesher so every output is checked against the structural contract. */
