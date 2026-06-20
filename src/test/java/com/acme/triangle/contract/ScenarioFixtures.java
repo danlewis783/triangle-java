@@ -10,12 +10,12 @@ import java.util.List;
  * golden mesh ({@code /meshes/<name>.txt}) produced from that input. The same
  * inputs will later drive a Java mesher directly.
  */
-final class ScenarioFixtures {
+public final class ScenarioFixtures {
 
-    static final class Scenario {
-        final String name;
-        final TriangleMesherInput input;
-        final String meshResource;
+    public static final class Scenario {
+        public final String name;
+        public final TriangleMesherInput input;
+        public final String meshResource;
 
         Scenario(String name, TriangleMesherInput input) {
             this.name = name;
@@ -27,7 +27,7 @@ final class ScenarioFixtures {
     private ScenarioFixtures() {
     }
 
-    static List<Scenario> all() {
+    public static List<Scenario> all() {
         List<Scenario> s = new ArrayList<>();
         s.add(new Scenario("pslg_square", square(0.0)));
         s.add(new Scenario("pslg_square_quality", square(30.0)));
@@ -39,7 +39,7 @@ final class ScenarioFixtures {
         return s;
     }
 
-    static Scenario byName(String name) {
+    public static Scenario byName(String name) {
         for (Scenario s : all()) {
             if (s.name.equals(name)) {
                 return s;

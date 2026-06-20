@@ -7,6 +7,7 @@ repositories {
 }
 
 dependencies {
+    implementation(libs.jna)
     testImplementation(libs.assertj)
 }
 
