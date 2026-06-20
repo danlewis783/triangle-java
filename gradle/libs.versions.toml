@@ -1,8 +1,14 @@
 # https://docs.gradle.org/current/userguide/version_catalogs.html#sec::toml-dependencies-format
 
 [versions]
-assertj = "3.27.3"
-junit-jupiter = "5.11.4"
+assertj = "3.27.7"
+junit-jupiter = "5.14.4"
+jspecify = "1.0.0"
+logback = "1.5.32"
+slf4j = "2.0.18"
 
 [libraries]
 assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }

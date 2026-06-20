@@ -20,7 +20,7 @@ testing {
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(11))
+        languageVersion.set(JavaLanguageVersion.of(8))
     }
 }
 
@@ -35,7 +35,7 @@ tasks.register<JavaExec>("run") {
 
     javaLauncher.set(
         javaToolchains.launcherFor {
-            languageVersion.set(JavaLanguageVersion.of(11))
+            languageVersion.set(JavaLanguageVersion.of(8))
         }
     )
 }
