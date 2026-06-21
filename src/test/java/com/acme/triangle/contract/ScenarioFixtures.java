@@ -48,6 +48,22 @@ public final class ScenarioFixtures {
         throw new IllegalArgumentException("no scenario " + name);
     }
 
+    /**
+     * The scenario's input with the refinement constraints cleared (angle bound
+     * to 0, regional max areas to 0): the constrained-Delaunay phase is not
+     * refined, so neither quality nor area is expected of it.
+     */
+    public static TriangleMesherInput cdtPhaseInput(String name) {
+        TriangleMesherInput in = byName(name).input;
+        in.minAngleDegrees = 0;
+        if (in.regionList != null) {
+            for (int r = 0; r < in.numberOfRegions; r++) {
+                in.regionList[4 * r + 3] = 0;          /* clear per-region max area */
+            }
+        }
+        return in;
+    }
+
     private static TriangleMesherInput square(double minAngle) {
         TriangleMesherInput in = pslg(
                 new double[]{0, 0, 1, 0, 1, 1, 0, 1},

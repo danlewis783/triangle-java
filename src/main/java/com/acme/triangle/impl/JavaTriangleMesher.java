@@ -4,7 +4,9 @@ import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Pure-Java {@link TriangleMesher}: constrained Delaunay
@@ -19,10 +21,11 @@ import java.util.List;
  * and correct at these sizes); a spatial/local-update version can come later,
  * validated by the same contract.
  *
- * <p>This honours the angle bound ({@code minAngleDegrees}); area constraints
- * are not part of the target API and are not enforced. Refinement assumes the
- * input segments do not cross each other (true for quality inputs here); the
- * constrained-Delaunay step handles crossings for the unrefined case.
+ * <p>This honours both the angle bound ({@code minAngleDegrees}) and per-region
+ * maximum-area constraints (the 4th value of each {@code regionList} entry). A
+ * global (non-regional) area bound is not part of the target API. Refinement
+ * assumes the input segments do not cross each other (true for quality inputs
+ * here); the constrained-Delaunay step handles crossings for the unrefined case.
  */
 public final class JavaTriangleMesher implements TriangleMesher {
 
@@ -30,14 +33,38 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        if (input.minAngleDegrees <= 0) {
+        if (!needsRefinement(input)) {
             return ConstrainedDelaunayTriangulator.triangulate(input);
         }
         return refine(input);
     }
 
+    private static boolean needsRefinement(TriangleMesherInput input) {
+        if (input.minAngleDegrees > 0) {
+            return true;
+        }
+        if (input.regionList != null) {
+            for (int r = 0; r < input.numberOfRegions; r++) {
+                if (input.regionList[4 * r + 3] > 0) {        /* a region max area */
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private TriangleMesherOutput refine(TriangleMesherInput input) {
         double bound = input.minAngleDegrees;
+        Map<Double, Double> maxAreaByAttr = new HashMap<>();
+        if (input.regionList != null) {
+            for (int r = 0; r < input.numberOfRegions; r++) {
+                double attr = input.regionList[4 * r + 2];
+                double maxArea = input.regionList[4 * r + 3];
+                if (maxArea > 0) {
+                    maxAreaByAttr.put(attr, maxArea);
+                }
+            }
+        }
 
         List<double[]> points = new ArrayList<>();
         for (int i = 0; i < input.numberOfPoints; i++) {
@@ -59,7 +86,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
                 splitSegment(points, segments, seg);
                 continue;
             }
-            int bad = badTriangle(mesh, points, bound);
+            int bad = badTriangle(mesh, points, bound, maxAreaByAttr);
             if (bad < 0) {
                 return mesh;                       /* quality achieved */
             }
@@ -128,17 +155,29 @@ public final class JavaTriangleMesher implements TriangleMesher {
         return -1;
     }
 
+    /** A triangle below the angle bound, or larger than its region's max area. */
     private static int badTriangle(TriangleMesherOutput mesh, List<double[]> points,
-                                   double bound) {
+                                   double bound, Map<Double, Double> maxAreaByAttr) {
         for (int t = 0; t < mesh.numberOfTriangles; t++) {
             double[] a = points.get(mesh.triangleList[3 * t]);
             double[] b = points.get(mesh.triangleList[3 * t + 1]);
             double[] c = points.get(mesh.triangleList[3 * t + 2]);
             if (minAngleDeg(a, b, c) < bound) {
-                return t;
+                return t;                                   /* skinny */
+            }
+            if (!maxAreaByAttr.isEmpty() && mesh.triangleAttributeList != null) {
+                Double maxArea = maxAreaByAttr.get(mesh.triangleAttributeList[t]);
+                if (maxArea != null && triangleArea(a, b, c) > maxArea) {
+                    return t;                               /* too large for region */
+                }
             }
         }
         return -1;
+    }
+
+    private static double triangleArea(double[] a, double[] b, double[] c) {
+        return Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+                / 2.0;
     }
 
     private static void splitSegment(List<double[]> points, List<int[]> segments, int s) {

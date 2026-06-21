@@ -53,6 +53,7 @@ public final class MeshValidator {
         checkHoles(o, in, v);
         checkRegions(o, segments, v);
         checkQuality(o, in, v);
+        checkArea(o, in, v);
         return v;
     }
 
@@ -303,6 +304,46 @@ public final class MeshValidator {
                 v.add("quality: tri " + i + " min angle " + minAngle + " < " + bound);
             }
         }
+    }
+
+    /* --- 7. regional max area ---------------------------------------------- */
+
+    private static final double AREA_TOLERANCE_REL = 1e-6;
+
+    private static void checkArea(TriangleMesherOutput o, TriangleMesherInput in,
+                                  List<String> v) {
+        if (in == null || in.regionList == null || in.numberOfRegions == 0
+                || o.triangleAttributeList == null) {
+            return;
+        }
+        /* region attribute -> max area, for regions that constrain area. */
+        Map<Double, Double> maxByAttr = new HashMap<>();
+        for (int r = 0; r < in.numberOfRegions; r++) {
+            double attr = in.regionList[4 * r + 2], maxArea = in.regionList[4 * r + 3];
+            if (maxArea > 0) {
+                maxByAttr.put(attr, maxArea);
+            }
+        }
+        if (maxByAttr.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < o.numberOfTriangles; i++) {
+            Double maxArea = maxByAttr.get(o.triangleAttributeList[i]);
+            if (maxArea == null) {
+                continue;
+            }
+            double area = triangleArea(o, i);
+            if (area > maxArea * (1 + AREA_TOLERANCE_REL)) {
+                v.add("area: tri " + i + " area " + area + " exceeds region max "
+                        + maxArea);
+            }
+        }
+    }
+
+    private static double triangleArea(TriangleMesherOutput o, int i) {
+        int a = corner(o, i, 0), b = corner(o, i, 1), c = corner(o, i, 2);
+        return Math.abs((x(o, b) - x(o, a)) * (y(o, c) - y(o, a))
+                - (y(o, b) - y(o, a)) * (x(o, c) - x(o, a))) / 2.0;
     }
 
     private static double minAngleDeg(double ax, double ay, double bx, double by,

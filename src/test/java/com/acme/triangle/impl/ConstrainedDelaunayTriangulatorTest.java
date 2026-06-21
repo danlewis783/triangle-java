@@ -28,8 +28,7 @@ class ConstrainedDelaunayTriangulatorTest {
             tests.add(dynamicTest(s.name, () -> {
                 TriangleMesherOutput o =
                         ConstrainedDelaunayTriangulator.triangulate(s.input);
-                TriangleMesherInput cdtInput = ScenarioFixtures.byName(s.name).input;
-                cdtInput.minAngleDegrees = 0;          /* CDT phase: not refined */
+                TriangleMesherInput cdtInput = ScenarioFixtures.cdtPhaseInput(s.name);
                 assertThat(o.numberOfTriangles)
                         .as("%s produced triangles", s.name).isGreaterThan(0);
                 assertThat(MeshValidator.validate(o, cdtInput))

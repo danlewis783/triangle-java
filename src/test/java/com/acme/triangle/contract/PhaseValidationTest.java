@@ -48,8 +48,7 @@ class PhaseValidationTest {
             tests.add(dynamicTest(s.name + " [cdt]", () -> {
                 TriangleMesherOutput o =
                         MeshDump.load("/meshes/" + s.name + ".cdt.txt");
-                TriangleMesherInput in = ScenarioFixtures.byName(s.name).input;
-                in.minAngleDegrees = 0;          /* CDT phase is not refined */
+                TriangleMesherInput in = ScenarioFixtures.cdtPhaseInput(s.name);
                 assertThat(MeshValidator.validate(o, in))
                         .as("cdt-phase violations for %s", s.name)
                         .isEmpty();
