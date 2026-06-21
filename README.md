@@ -200,3 +200,13 @@ build the corresponding shared library and place it under the matching prefix
 - **Area constraints** are not enforced (see above).
 - **Native platforms** other than Windows x64 need their shared library built
   and vendored.
+
+---
+
+## Licensing
+
+The pure-Java source here is original work (it implements published algorithms,
+validated against Triangle's output). It bundles a compiled build of Jonathan
+Shewchuk's **Triangle** (`triangle.dll`) and Triangle-generated data; those
+artifacts are covered by Triangle's license — free for non-commercial use with
+copyright notices retained. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
