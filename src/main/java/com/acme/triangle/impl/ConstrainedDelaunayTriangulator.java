@@ -324,13 +324,18 @@ public final class ConstrainedDelaunayTriangulator {
         }
     }
 
+    /* The first triangle whose closed region contains (x,y). On-edge counts, so
+       a seed lying exactly on a triangle edge still locates a triangle (it would
+       be missed by a strictly-inside test). */
     private static int locate(double[] pts, List<int[]> tris, double x, double y) {
         for (int i = 0; i < tris.size(); i++) {
             int[] t = tris.get(i);
             int s1 = orientXY(pts, t[0], t[1], x, y);
             int s2 = orientXY(pts, t[1], t[2], x, y);
             int s3 = orientXY(pts, t[2], t[0], x, y);
-            if (s1 != 0 && s1 == s2 && s2 == s3) {
+            boolean nonNeg = s1 >= 0 && s2 >= 0 && s3 >= 0;
+            boolean nonPos = s1 <= 0 && s2 <= 0 && s3 <= 0;
+            if ((nonNeg || nonPos) && !(s1 == 0 && s2 == 0 && s3 == 0)) {
                 return i;
             }
         }
