@@ -54,6 +54,7 @@ public final class MeshValidator {
         checkRegions(o, segments, v);
         checkQuality(o, in, v);
         checkArea(o, in, v);
+        checkSegmentCoverage(o, in, v);
         return v;
     }
 
@@ -304,6 +305,84 @@ public final class MeshValidator {
                 v.add("quality: tri " + i + " min angle " + minAngle + " < " + bound);
             }
         }
+    }
+
+    /* --- 8. segment coverage ----------------------------------------------- */
+
+    private static final double ON_SEGMENT_REL_TOL = 1e-6;
+
+    /**
+     * Every input segment must be exactly covered by a contiguous chain of output
+     * subsegments. Catches the case where a vertex lies on a segment: the segment
+     * becomes a chain of mesh edges, and the output must reflect that rather than
+     * list the un-split segment. Input point indices coincide with output point
+     * indices (the original points come first), so {@code in.segmentList}
+     * endpoints address {@code out.pointList}.
+     */
+    private static void checkSegmentCoverage(TriangleMesherOutput o,
+                                             TriangleMesherInput in, List<String> v) {
+        if (in == null || in.segmentList == null || in.numberOfSegments == 0
+                || o.segmentList == null) {
+            return;
+        }
+        for (int s = 0; s < in.numberOfSegments; s++) {
+            int a = in.segmentList[2 * s], b = in.segmentList[2 * s + 1];
+            if (outOfRange(a, o.numberOfPoints) || outOfRange(b, o.numberOfPoints)) {
+                continue;            /* malformed mesh; other checks report it */
+            }
+            double ax = x(o, a), ay = y(o, a);
+            double dx = x(o, b) - ax, dy = y(o, b) - ay;
+            double len2 = dx * dx + dy * dy;
+            if (len2 <= 0) {
+                continue;
+            }
+            List<double[]> pieces = new ArrayList<>();
+            for (int i = 0; i < o.numberOfSegments; i++) {
+                int u = o.segmentList[2 * i], w = o.segmentList[2 * i + 1];
+                if (outOfRange(u, o.numberOfPoints) || outOfRange(w, o.numberOfPoints)) {
+                    continue;
+                }
+                double tu = onLine(ax, ay, dx, dy, len2, x(o, u), y(o, u));
+                double tw = onLine(ax, ay, dx, dy, len2, x(o, w), y(o, w));
+                if (!Double.isNaN(tu) && !Double.isNaN(tw)) {
+                    pieces.add(new double[]{Math.min(tu, tw), Math.max(tu, tw)});
+                }
+            }
+            if (!coversUnitInterval(pieces)) {
+                v.add("segment-coverage: input segment (" + a + "," + b
+                        + ") is not covered by a chain of output subsegments");
+            }
+        }
+    }
+
+    /** Parameter t of P along segment a+t*(b-a) if P lies on it, else NaN. */
+    private static double onLine(double ax, double ay, double dx, double dy,
+                                 double len2, double px, double py) {
+        double rx = px - ax, ry = py - ay;
+        double cross = dx * ry - dy * rx;
+        if (cross * cross > ON_SEGMENT_REL_TOL * ON_SEGMENT_REL_TOL * len2 * len2) {
+            return Double.NaN;                         /* off the line */
+        }
+        double t = (rx * dx + ry * dy) / len2;
+        return (t < -ON_SEGMENT_REL_TOL || t > 1 + ON_SEGMENT_REL_TOL) ? Double.NaN : t;
+    }
+
+    private static boolean coversUnitInterval(List<double[]> pieces) {
+        if (pieces.isEmpty()) {
+            return false;
+        }
+        pieces.sort((p, q) -> Double.compare(p[0], q[0]));
+        if (pieces.get(0)[0] > ON_SEGMENT_REL_TOL) {
+            return false;                              /* gap at the start */
+        }
+        double reach = 0;
+        for (double[] piece : pieces) {
+            if (piece[0] > reach + ON_SEGMENT_REL_TOL) {
+                return false;                          /* gap in the middle */
+            }
+            reach = Math.max(reach, piece[1]);
+        }
+        return reach >= 1 - ON_SEGMENT_REL_TOL;        /* reaches the end */
     }
 
     /* --- 7. regional max area ---------------------------------------------- */

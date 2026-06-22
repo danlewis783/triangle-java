@@ -86,7 +86,9 @@ public final class ConstrainedDelaunayTriangulator {
         boolean changed = true;
         while (changed) {
             changed = false;
-            outer:
+
+            /* (a) Two segments cross: split both at their intersection point. */
+            crossings:
             for (int i = 0; i < segs.size(); i++) {
                 for (int j = i + 1; j < segs.size(); j++) {
                     int[] a = segs.get(i), b = segs.get(j);
@@ -104,7 +106,26 @@ public final class ConstrainedDelaunayTriangulator {
                         segs.add(a1);
                         segs.add(b1);
                         changed = true;
-                        break outer;
+                        break crossings;
+                    }
+                }
+            }
+            if (changed) {
+                continue;
+            }
+
+            /* (b) A vertex lies exactly on a segment (a T-junction): split the
+               segment there. The whole segment cannot be recovered as one edge
+               with a vertex on it, so it must become a chain of subsegments. */
+            onEdge:
+            for (int i = 0; i < segs.size(); i++) {
+                int[] s = segs.get(i);
+                for (int v = 0; v < pts.size(); v++) {
+                    if (v != s[0] && v != s[1] && onSegmentInterior(pts, s[0], s[1], v)) {
+                        segs.set(i, new int[]{s[0], v, s[2]});
+                        segs.add(new int[]{v, s[1], s[2]});
+                        changed = true;
+                        break onEdge;
                     }
                 }
             }
@@ -124,6 +145,17 @@ public final class ConstrainedDelaunayTriangulator {
 
     private static boolean share(int[] a, int[] b) {
         return a[0] == b[0] || a[0] == b[1] || a[1] == b[0] || a[1] == b[1];
+    }
+
+    /** True if vertex v is exactly collinear with (a,b) and strictly between them. */
+    private static boolean onSegmentInterior(List<double[]> pts, int a, int b, int v) {
+        if (orient(pts, a, b, v) != 0) {
+            return false;
+        }
+        double[] pa = pts.get(a), pb = pts.get(b), pv = pts.get(v);
+        double toA = (pv[0] - pa[0]) * (pb[0] - pa[0]) + (pv[1] - pa[1]) * (pb[1] - pa[1]);
+        double toB = (pv[0] - pb[0]) * (pa[0] - pb[0]) + (pv[1] - pb[1]) * (pa[1] - pb[1]);
+        return toA > 0 && toB > 0;            /* strictly inside, not at an endpoint */
     }
 
     private static double[] intersection(List<double[]> pts, int p0, int p1,
