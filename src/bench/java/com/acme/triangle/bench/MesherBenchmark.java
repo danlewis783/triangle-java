@@ -4,6 +4,7 @@ import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.TriangleMeshers;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -15,8 +16,11 @@ import java.util.Random;
  * Lives in the {@code bench} source set so it is excluded from the published
  * jar and from the test run.
  * <p>
- * Run with no arguments to benchmark the built-in synthetic cases:
+ * Run with no arguments to benchmark the default light synthetic suite:
  * <pre>./gradlew bench</pre>
+ * <p>
+ * Pass {@code heavy} to run a heavier synthetic suite:
+ * <pre>./gradlew bench --args="heavy"</pre>
  * <p>
  * Pass a directory containing JSON mesher-input documents to benchmark
  * real-world cases:
@@ -45,44 +49,56 @@ public final class MesherBenchmark {
         TriangleMesher nat = TriangleMeshers.capturing(TriangleMeshers.nativeMesher(), "native");
 
         if (args.length == 0) {
-            runSyntheticCases(java, nat);
+            runLightSyntheticCases(java, nat);
             return;
         }
 
         if (args.length == 1) {
-            runJsonCases(java, nat, Paths.get(args[0]));
+            if ("light".equalsIgnoreCase(args[0])) {
+                runLightSyntheticCases(java, nat);
+                return;
+            }
+            if ("heavy".equalsIgnoreCase(args[0])) {
+                runHeavySyntheticCases(java, nat);
+                return;
+            }
+
+            Path path = Paths.get(args[0]);
+            if (Files.isDirectory(path)) {
+                runJsonCases(java, nat, path);
+                return;
+            }
+
+            System.err.println("argument is neither a mode nor a directory: " + args[0]);
+            printUsageAndExit();
             return;
         }
 
-        System.err.println("usage:");
-        System.err.println("  bench                 # built-in synthetic cases");
-        System.err.println("  bench <input-dir>     # JSON benchmark cases");
-        System.exit(2);
+        printUsageAndExit();
     }
 
-    private static void runSyntheticCases(TriangleMesher java, TriangleMesher nat) {
+    private static void runLightSyntheticCases(TriangleMesher java, TriangleMesher nat) {
+        System.out.println("mode: light");
         printHeader();
 
-        int[][] cdt = {{10, 50}, {50, 10}, {100, 5}, {200, 3}};
-        for (int[] c : cdt) {
-            row(java, nat, "cdt_" + c[0], square(c[0], 0), c[1]);
-        }
+        row(java, nat, "cdt_50", square(50, 0), 10);
+        row(java, nat, "cdt_100", square(100, 0), 5);
+        row(java, nat, "quality_10", square(10, 20), 5);
+        row(java, nat, "quality_20", square(20, 20), 2);
+        row(java, nat, "area_0.010_q20", squareWithRegionArea(0, 20, 0.010), 3);
+        row(java, nat, "area_0.0075_q20", squareWithRegionArea(0, 20, 0.0075), 2);
+    }
 
-        int[][] quality = {{10, 5}, {20, 2}};
-        for (int[] c : quality) {
-            row(java, nat, "quality_" + c[0], square(c[0], 20), c[1]);
-        }
+    private static void runHeavySyntheticCases(TriangleMesher java, TriangleMesher nat) {
+        System.out.println("mode: heavy");
+        printHeader();
 
-        row(java, nat, "area_0.010_q20", squareWithRegionArea(0, 20, 0.010), 5);
-        row(java, nat, "area_0.005_q20", squareWithRegionArea(0, 20, 0.005), 3);
-        row(java, nat, "area_0.005_q28", squareWithRegionArea(0, 28, 0.005), 2);
-        row(java, nat, "area_0.0025_q20", squareWithRegionArea(0, 20, 0.0025), 2);
-        row(java, nat, "area_5pts_q20", squareWithRegionArea(5, 20, 0.005), 3);
-        row(java, nat, "area_10pts_q20", squareWithRegionArea(10, 20, 0.005), 2);
-
-        row(java, nat, "hole12_q20_a0.010", rectangleWithPolygonHole(12, 20, 0.010), 3);
-        row(java, nat, "hole16_q20_a0.007", rectangleWithPolygonHole(16, 20, 0.007), 2);
-        row(java, nat, "hole16_q28_a0.005", rectangleWithPolygonHole(16, 28, 0.005), 2);
+        row(java, nat, "cdt_200", square(200, 0), 3);
+        row(java, nat, "quality_20", square(20, 20), 2);
+        row(java, nat, "area_0.010_q20", squareWithRegionArea(0, 20, 0.010), 3);
+        row(java, nat, "area_0.0075_q20", squareWithRegionArea(0, 20, 0.0075), 2);
+        row(java, nat, "area_0.005_q20", squareWithRegionArea(0, 20, 0.005), 2);
+        row(java, nat, "hole12_q20_a0.010", rectangleWithPolygonHole(12, 20, 0.010), 2);
     }
 
     private static void runJsonCases(TriangleMesher java, TriangleMesher nat, Path dir) {
@@ -92,6 +108,8 @@ public final class MesherBenchmark {
             System.exit(1);
         }
 
+        System.out.println("mode: json");
+        System.out.println("input-dir: " + dir);
         printHeader();
 
         for (BenchmarkInputs.NamedInput c : cases) {
@@ -102,6 +120,15 @@ public final class MesherBenchmark {
     private static void printHeader() {
         System.out.printf("%-24s %8s %8s %4s %12s %12s %9s%n",
                 "case", "points", "tri", "q", "java_ms", "native_ms", "ratio");
+    }
+
+    private static void printUsageAndExit() {
+        System.err.println("usage:");
+        System.err.println("  bench                 # default light synthetic suite");
+        System.err.println("  bench light           # explicit light synthetic suite");
+        System.err.println("  bench heavy           # heavier synthetic suite");
+        System.err.println("  bench <input-dir>     # JSON benchmark cases");
+        System.exit(2);
     }
 
     private static void row(TriangleMesher java, TriangleMesher nat,
@@ -262,7 +289,6 @@ public final class MesherBenchmark {
         int totalPoints = outerPoints + holeSides;
         double[] pts = new double[2 * totalPoints];
 
-        /* Outer rectangle: 2 x 1. */
         pts[0] = 0.0;
         pts[1] = 0.0;
         pts[2] = 2.0;
@@ -272,7 +298,6 @@ public final class MesherBenchmark {
         pts[6] = 0.0;
         pts[7] = 1.0;
 
-        /* Inner regular polygon hole centred at (1.0, 0.5). */
         double cx = 1.0;
         double cy = 0.5;
         double radius = 0.22;
@@ -287,7 +312,6 @@ public final class MesherBenchmark {
         int[] segs = new int[2 * segments];
         int[] markers = new int[segments];
 
-        /* Outer boundary segments, marker 1. */
         segs[0] = 0;
         segs[1] = 1;
         segs[2] = 1;
@@ -301,7 +325,6 @@ public final class MesherBenchmark {
         markers[2] = 1;
         markers[3] = 1;
 
-        /* Hole boundary segments, marker 2. */
         for (int i = 0; i < holeSides; i++) {
             int s = 4 + i;
             int a = outerPoints + i;
