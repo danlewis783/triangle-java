@@ -85,13 +85,68 @@ final class IncrementalCdt {
         }
         int pIdx = points.size();
         points.add(p);
+        insertViaCavity(pIdx, new int[]{start}, -1L);
+        return pIdx;
+    }
 
+    /**
+     * Split segment {@code segIndex} at its midpoint (Ruppert's subsegment
+     * split): insert the midpoint as a vertex and replace the segment with its
+     * two halves.
+     *
+     * <p>The midpoint is inserted with the same cavity machinery, seeded from the
+     * triangles incident to the segment (robust - no point-location test on the
+     * rounded midpoint). The old segment is dropped from the constraint set
+     * first, so the cavity may span both of its sides - an interior
+     * region-boundary segment splits both regions at once - and the two halves
+     * are registered afterwards.
+     *
+     * @return the new midpoint vertex index
+     */
+    int splitSegment(int segIndex) {
+        int[] seg = segments.get(segIndex);
+        int a = seg[0], b = seg[1], marker = seg[2];
+        int[] seeds = incidentTriangles(a, b);
+        if (seeds.length == 0) {
+            throw new IllegalStateException("segment (" + a + "," + b + ") is not an edge");
+        }
+        double[] pa = points.get(a), pb = points.get(b);
+        int mIdx = points.size();
+        points.add(new double[]{(pa[0] + pb[0]) / 2.0, (pa[1] + pb[1]) / 2.0});
+
+        segSet.remove(key(a, b));            /* let the cavity span the old segment */
+        insertViaCavity(mIdx, seeds, key(a, b));
+
+        segments.set(segIndex, new int[]{a, mIdx, marker});
+        segments.add(new int[]{mIdx, b, marker});
+        segSet.add(key(a, mIdx));
+        segSet.add(key(mIdx, b));
+        return mIdx;
+    }
+
+    /**
+     * Constrained Bowyer-Watson insertion of an already-added vertex {@code pIdx}.
+     * Starting from {@code seeds} (triangles already known to contain it in their
+     * circumcircle), gather the cavity of triangles whose circumcircle contains
+     * it - never crossing a current segment - then re-fan the cavity boundary
+     * around it. The boundary edge equal to {@code skipEdgeKey} is not re-fanned
+     * (used when splitting a boundary segment, where the split edge would form a
+     * degenerate triangle); pass {@code -1L} for none. Each new triangle inherits
+     * its source cavity triangle's region attribute, so a cavity that spans two
+     * regions attributes correctly.
+     */
+    private void insertViaCavity(int pIdx, int[] seeds, long skipEdgeKey) {
+        double[] p = points.get(pIdx);
         int[] adj = adjacency(tris);
         boolean[] inCavity = new boolean[tris.size()];
         List<Integer> cavity = new ArrayList<>();
         Deque<Integer> stack = new ArrayDeque<>();
-        inCavity[start] = true;
-        stack.push(start);
+        for (int s : seeds) {
+            if (!inCavity[s]) {
+                inCavity[s] = true;
+                stack.push(s);
+            }
+        }
         while (!stack.isEmpty()) {
             int t = stack.pop();
             cavity.add(t);
@@ -112,18 +167,23 @@ final class IncrementalCdt {
             }
         }
 
-        /* Re-fan the cavity boundary around the new point. A cavity edge is on
-           the boundary when its neighbour is outside the cavity or it is a
-           segment. */
-        double attr = attrs != null ? attrs.get(cavity.get(0)) : 0.0;
+        /* Re-fan: a cavity edge is on the boundary when its neighbour is outside
+           the cavity or it is a segment. Each new triangle keeps its source
+           triangle's attribute. */
         List<int[]> newTris = new ArrayList<>();
+        List<Double> newAttr = attrs != null ? new ArrayList<>() : null;
         for (int t : cavity) {
             int[] tc = tris.get(t);
             for (int j = 0; j < 3; j++) {
                 int nb = adj[3 * t + j];
                 int u = tc[(j + 1) % 3], w = tc[(j + 2) % 3];
-                if (nb < 0 || !inCavity[nb] || segSet.contains(key(u, w))) {
+                long k = key(u, w);
+                boolean boundary = nb < 0 || !inCavity[nb] || segSet.contains(k);
+                if (boundary && k != skipEdgeKey) {
                     newTris.add(ccw(u, w, pIdx));
+                    if (attrs != null) {
+                        newAttr.add(attrs.get(t));
+                    }
                 }
             }
         }
@@ -138,15 +198,34 @@ final class IncrementalCdt {
                 }
             }
         }
-        for (int[] nt : newTris) {
-            kept.add(nt);
-            if (attrs != null) {
-                keptAttr.add(attr);
-            }
+        kept.addAll(newTris);
+        if (attrs != null) {
+            keptAttr.addAll(newAttr);
         }
         tris = kept;
         attrs = keptAttr;
-        return pIdx;
+    }
+
+    /** The (one or two) triangles having both a and b as corners. */
+    private int[] incidentTriangles(int a, int b) {
+        int t1 = -1, t2 = -1;
+        for (int i = 0; i < tris.size(); i++) {
+            int[] t = tris.get(i);
+            boolean ha = t[0] == a || t[1] == a || t[2] == a;
+            boolean hb = t[0] == b || t[1] == b || t[2] == b;
+            if (ha && hb) {
+                if (t1 < 0) {
+                    t1 = i;
+                } else {
+                    t2 = i;
+                    break;
+                }
+            }
+        }
+        if (t1 < 0) {
+            return new int[0];
+        }
+        return t2 < 0 ? new int[]{t1} : new int[]{t1, t2};
     }
 
     TriangleMesherOutput toOutput() {

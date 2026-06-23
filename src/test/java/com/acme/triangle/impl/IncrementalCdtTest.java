@@ -54,6 +54,36 @@ class IncrementalCdtTest {
         return tests;
     }
 
+    @TestFactory
+    List<DynamicTest> splittingSegmentsKeepsTheMeshValid() {
+        List<DynamicTest> tests = new ArrayList<>();
+        for (Scenario s : ScenarioFixtures.all()) {
+            tests.add(dynamicTest(s.name, () -> {
+                TriangleMesherOutput base =
+                        ConstrainedDelaunayTriangulator.triangulate(s.input);
+                if (base.numberOfTriangles == 0 || base.numberOfSegments == 0) {
+                    return;
+                }
+
+                IncrementalCdt mesh = new IncrementalCdt(base);
+                int origSegs = base.numberOfSegments;
+                for (int i = 0; i < origSegs; i++) {
+                    mesh.splitSegment(i);           /* index i stays the first half */
+                }
+                /* A few interior points too, exercising both paths together. */
+                for (int i = 0; i < 4; i++) {
+                    mesh.insertInteriorPoint(mesh.centroidOfLargestTriangle());
+                }
+
+                TriangleMesherOutput out = mesh.toOutput();
+                assertThat(MeshValidator.validate(out, structuralOnly(s.input)))
+                        .as("incremental CDT valid after splits for %s", s.name)
+                        .isEmpty();
+            }));
+        }
+        return tests;
+    }
+
     /** A copy of the input with the angle bound and per-region area limits
         removed, so only the structural invariants are required. */
     private static TriangleMesherInput structuralOnly(TriangleMesherInput src) {
