@@ -17,7 +17,7 @@ public final class TriangleMesherOutput {
     /** Triangle corners, three zero-based point indices each (length 3*T). */
     public int[] triangleList;
 
-    /** One attribute per triangle (region/component identity); may be empty. */
+    /** One region id per triangle; may be empty. */
     public double[] triangleAttributeList;
 
     /** Three neighbour triangle indices per triangle, {@code -1} for none. */
