@@ -17,10 +17,12 @@ sourceSets {
 
 dependencies {
     implementation(libs.jna)
+    implementation(libs.jackson.databind)
     testImplementation(libs.assertj)
     // The bench source set sees the same dependencies as main (e.g. JNA).
     "benchImplementation"(sourceSets.main.get().output)
     "benchImplementation"(libs.jna)
+    "benchImplementation"(libs.jackson.databind)
 }
 
 testing {

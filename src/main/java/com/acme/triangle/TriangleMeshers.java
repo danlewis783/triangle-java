@@ -1,5 +1,6 @@
 package com.acme.triangle;
 
+import com.acme.triangle.impl.CapturingTriangleMesher;
 import com.acme.triangle.impl.DifferentialTriangleMesher;
 import com.acme.triangle.impl.JavaTriangleMesher;
 import com.acme.triangle.impl.NativeTriangleMesher;
@@ -23,6 +24,11 @@ public final class TriangleMeshers {
     /** The pure-Java implementation (constrained Delaunay + Ruppert refinement). */
     public static TriangleMesher javaMesher() {
         return new JavaTriangleMesher();
+    }
+
+    /** Wrap a mesher so every input can optionally be captured as JSON. */
+    public static TriangleMesher capturing(TriangleMesher delegate, String mesherName) {
+        return new CapturingTriangleMesher(delegate, mesherName);
     }
 
     /** Wrap a mesher so every output is checked against the structural contract. */
