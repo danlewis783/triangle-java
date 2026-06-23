@@ -166,9 +166,6 @@ public final class MesherBenchmark {
         boolean hasHole = in.numberOfHoles > 0;
 
         if (hasHole && hasAreaConstraint) {
-            if (in.minAngleDegrees >= 28) {
-                return 2;
-            }
             return 2;
         }
 
