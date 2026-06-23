@@ -66,65 +66,52 @@ public final class JavaTriangleMesher implements TriangleMesher {
             }
         }
 
-        List<double[]> points = new ArrayList<>();
-        for (int i = 0; i < input.numberOfPoints; i++) {
-            points.add(new double[]{input.pointList[2 * i], input.pointList[2 * i + 1]});
-        }
-        List<int[]> segments = new ArrayList<>();
-        for (int i = 0; i < input.numberOfSegments; i++) {
-            int marker = input.segmentMarkerList != null ? input.segmentMarkerList[i] : 0;
-            segments.add(new int[]{input.segmentList[2 * i], input.segmentList[2 * i + 1],
-                    marker});
-        }
+        /* Build the constrained Delaunay mesh once, then refine it in place: each
+           Steiner point or subsegment split updates the mesh locally instead of
+           rebuilding it from scratch every iteration (the old ~O(N^3) cost). */
+        IncrementalCdt mesh = new IncrementalCdt(
+                ConstrainedDelaunayTriangulator.triangulate(input));
 
-        TriangleMesherOutput mesh = null;
         for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
-            mesh = ConstrainedDelaunayTriangulator.triangulate(synthInput(points, segments, input));
+            TriangleMesherOutput snap = mesh.toOutput();
+            List<double[]> points = pointList(snap);
+            List<int[]> segments = segmentList(snap);
 
-            int seg = encroachedSubsegment(mesh, points, segments);
+            int seg = encroachedSubsegment(snap, points, segments);
             if (seg >= 0) {
-                splitSegment(points, segments, seg);
+                mesh.splitSegment(seg);
                 continue;
             }
-            int bad = badTriangle(mesh, points, bound, maxAreaByAttr);
+            int bad = badTriangle(snap, points, bound, maxAreaByAttr);
             if (bad < 0) {
-                return mesh;                       /* quality achieved */
+                return snap;                       /* quality achieved */
             }
-            double[] centre = circumcentre(mesh, points, bad);
+            double[] centre = circumcentre(snap, points, bad);
             int encroached = subsegmentEncroachedBy(centre, points, segments);
             if (encroached >= 0) {
-                splitSegment(points, segments, encroached);
+                mesh.splitSegment(encroached);
             } else {
-                points.add(centre);
+                mesh.insertInteriorPoint(centre);
             }
         }
         throw new IllegalStateException("refinement did not converge");
     }
 
-    private static TriangleMesherInput synthInput(List<double[]> points,
-                                                  List<int[]> segments,
-                                                  TriangleMesherInput original) {
-        TriangleMesherInput in = new TriangleMesherInput();
-        in.numberOfPoints = points.size();
-        in.pointList = new double[points.size() * 2];
-        for (int i = 0; i < points.size(); i++) {
-            in.pointList[2 * i] = points.get(i)[0];
-            in.pointList[2 * i + 1] = points.get(i)[1];
+    private static List<double[]> pointList(TriangleMesherOutput o) {
+        List<double[]> pts = new ArrayList<>(o.numberOfPoints);
+        for (int i = 0; i < o.numberOfPoints; i++) {
+            pts.add(new double[]{o.pointList[2 * i], o.pointList[2 * i + 1]});
         }
-        in.numberOfSegments = segments.size();
-        in.segmentList = new int[segments.size() * 2];
-        in.segmentMarkerList = new int[segments.size()];
-        for (int i = 0; i < segments.size(); i++) {
-            in.segmentList[2 * i] = segments.get(i)[0];
-            in.segmentList[2 * i + 1] = segments.get(i)[1];
-            in.segmentMarkerList[i] = segments.get(i)[2];
+        return pts;
+    }
+
+    private static List<int[]> segmentList(TriangleMesherOutput o) {
+        List<int[]> segs = new ArrayList<>(o.numberOfSegments);
+        for (int i = 0; i < o.numberOfSegments; i++) {
+            int marker = o.segmentMarkerList != null ? o.segmentMarkerList[i] : 0;
+            segs.add(new int[]{o.segmentList[2 * i], o.segmentList[2 * i + 1], marker});
         }
-        in.holeList = original.holeList;
-        in.numberOfHoles = original.numberOfHoles;
-        in.regionList = original.regionList;
-        in.numberOfRegions = original.numberOfRegions;
-        in.quiet = true;
-        return in;
+        return segs;
     }
 
     /** First subsegment with an adjacent triangle apex inside its diametral disk. */
@@ -178,15 +165,6 @@ public final class JavaTriangleMesher implements TriangleMesher {
     private static double triangleArea(double[] a, double[] b, double[] c) {
         return Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
                 / 2.0;
-    }
-
-    private static void splitSegment(List<double[]> points, List<int[]> segments, int s) {
-        int[] seg = segments.get(s);
-        double[] a = points.get(seg[0]), b = points.get(seg[1]);
-        int m = points.size();
-        points.add(new double[]{(a[0] + b[0]) / 2, (a[1] + b[1]) / 2});
-        segments.set(s, new int[]{seg[0], m, seg[2]});
-        segments.add(new int[]{m, seg[1], seg[2]});
     }
 
     private static int thirdVertex(int c0, int c1, int c2, int a, int b) {
