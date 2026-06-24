@@ -67,6 +67,10 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
     private TriangleMesherOutput refine(TriangleMesherInput input) {
         double bound = input.minAngleDegrees;
+        /* Below-bound test uses squared cosine vs cos^2(bound) - no trig per
+           triangle (Triangle does the same, triangle.c:4036). */
+        double cosBound = Math.cos(Math.toRadians(bound));
+        double cosSqBound = cosBound * cosBound;
         Map<Double, Double> maxAreaByAttr = new HashMap<>();
         if (input.regionList != null) {
             for (int r = 0; r < input.numberOfRegions; r++) {
@@ -94,7 +98,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
             if (seg >= 0) {
                 mesh.splitSegment(seg);
             } else {
-                int bad = badTriangle(mesh, snap, points, bound, maxAreaByAttr);
+                int bad = badTriangle(mesh, snap, points, cosSqBound, maxAreaByAttr);
                 if (bad < 0) {
                     return snap;                   /* quality achieved */
                 }
@@ -193,24 +197,58 @@ public final class JavaTriangleMesher implements TriangleMesher {
         triangle. Area is checked first (it always terminates); the skip rule
         applies only to the angle bound. */
     private static int badTriangle(IncrementalCdt cdt, TriangleMesherOutput mesh,
-                                   List<double[]> points, double bound,
+                                   List<double[]> points, double cosSqBound,
                                    Map<Double, Double> maxAreaByAttr) {
+        boolean checkArea = !maxAreaByAttr.isEmpty() && mesh.triangleAttributeList != null;
         for (int t = 0; t < mesh.numberOfTriangles; t++) {
             int ia = mesh.triangleList[3 * t];
             int ib = mesh.triangleList[3 * t + 1];
             int ic = mesh.triangleList[3 * t + 2];
             double[] a = points.get(ia), b = points.get(ib), c = points.get(ic);
-            if (!maxAreaByAttr.isEmpty() && mesh.triangleAttributeList != null) {
+            if (checkArea) {
                 Double maxArea = maxAreaByAttr.get(mesh.triangleAttributeList[t]);
                 if (maxArea != null && triangleArea(a, b, c) > maxArea) {
                     return t;                               /* too large for region */
                 }
             }
-            if (minAngleDeg(a, b, c) < bound && !unsplittable(cdt, points, ia, ib, ic)) {
+            if (belowAngleBound(a, b, c, cosSqBound)
+                    && !unsplittable(cdt, points, ia, ib, ic)) {
                 return t;                                   /* skinny and fixable */
             }
         }
         return -1;
+    }
+
+    /**
+     * True if the triangle's smallest angle is below the bound, tested via the
+     * squared cosine of the angle opposite the shortest edge against
+     * {@code cos^2(bound)} - no {@code acos}/{@code sqrt} per triangle
+     * (triangle.c:4036). The smallest angle is opposite the shortest edge and is
+     * always acute, so the squared comparison is exact in sign.
+     */
+    private static boolean belowAngleBound(double[] a, double[] b, double[] c,
+                                           double cosSqBound) {
+        double dxod = b[0] - a[0], dyod = b[1] - a[1];
+        double dxda = c[0] - b[0], dyda = c[1] - b[1];
+        double dxao = c[0] - a[0], dyao = c[1] - a[1];
+        double apexlen = dxod * dxod + dyod * dyod;        /* |a-b|^2, opposite c */
+        double orglen = dxda * dxda + dyda * dyda;          /* |b-c|^2, opposite a */
+        double destlen = dxao * dxao + dyao * dyao;         /* |a-c|^2, opposite b */
+        double dot, denom;
+        if (apexlen < orglen && apexlen < destlen) {
+            dot = dxda * dxao + dyda * dyao;                /* angle at c */
+            denom = orglen * destlen;
+        } else if (orglen < destlen) {
+            dot = dxod * dxao + dyod * dyao;                /* angle at a */
+            denom = apexlen * destlen;
+        } else {
+            dot = dxod * dxda + dyod * dyda;                /* angle at b */
+            denom = apexlen * orglen;
+        }
+        if (denom <= 0.0) {
+            return true;                                    /* degenerate: treat as bad */
+        }
+        return dot * dot / denom > cosSqBound;
     }
 
     /**
@@ -351,20 +389,4 @@ public final class JavaTriangleMesher implements TriangleMesher {
         return new double[]{ux, uy};
     }
 
-    private static double minAngleDeg(double[] a, double[] b, double[] c) {
-        double[][] p = {a, b, c};
-        double best = 180;
-        for (int k = 0; k < 3; k++) {
-            double[] o = p[k], u = p[(k + 1) % 3], v = p[(k + 2) % 3];
-            double ux = u[0] - o[0], uy = u[1] - o[1];
-            double vx = v[0] - o[0], vy = v[1] - o[1];
-            double lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
-            if (lu == 0 || lv == 0) {
-                return 0;
-            }
-            double cs = Math.max(-1, Math.min(1, (ux * vx + uy * vy) / (lu * lv)));
-            best = Math.min(best, Math.toDegrees(Math.acos(cs)));
-        }
-        return best;
-    }
 }
