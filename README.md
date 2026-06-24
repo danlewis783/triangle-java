@@ -113,15 +113,15 @@ Built and validated phase by phase:
 |---|---|---|
 | 1 | `DelaunayTriangulator` | Bowyer–Watson incremental insertion |
 | 2 | `ConstrainedDelaunayTriangulator` | split crossing segments → Delaunay → recover segments by edge flips → restore constrained Delaunay → flood-fill carve holes/concavities → flood-fill region attributes |
-| 3 | `JavaTriangleMesher` | + Ruppert refinement (split encroached subsegments; insert circumcentres of below-bound triangles, deferring to subsegment splits) |
+| 3 | `JavaTriangleMesher` | + Ruppert/Üngör refinement (split encroached subsegments with concentric shells; insert off-centre Steiner points for below-bound triangles, deferring to subsegment splits; Miller–Pav–Walkington skip on fine-featured boundaries) |
 
 Because contract equivalence frees the algorithm choice, this uses the simplest
-correct algorithms (Bowyer–Watson, Ruppert) rather than Triangle's
+correct algorithms (Bowyer–Watson, Ruppert/Üngör) rather than Triangle's
 divide-and-conquer. All geometric tests use the robust `Predicates`.
 
-It honours `minAngleDegrees`. **Area constraints are not implemented** — they are
-not part of the target API (Triangle's golden meshes were refined by a global
-area bound the DTO does not carry; the contract checks angle quality, not area).
+It honours `minAngleDegrees` and **per-region maximum-area constraints** (the 4th
+value of each `regionList` entry). A single *global* area bound (Triangle's `-a`
+with no region) is not part of the target API.
 
 ### `NativeTriangleMesher` — JNA adapter
 
@@ -192,12 +192,17 @@ build the corresponding shared library and place it under the matching prefix
 
 ## Limitations & possible follow-ups
 
-- **Performance.** The predicates are exact `BigDecimal` everywhere, and
-  refinement rebuilds the constrained Delaunay mesh after every Steiner point.
-  Correct, but unoptimized. A filtered predicate (fast `double` estimate with an
-  exact fallback) and incremental insertion would speed it up — validated by the
-  same oracle.
-- **Area constraints** are not enforced (see above).
+- **Performance.** Filtered predicates (fast `double` estimate with an exact
+  `BigDecimal` fallback) and incremental refinement (local Bowyer–Watson
+  insertion instead of a full rebuild per Steiner point) are in place. What
+  remains: each insertion still rebuilds triangle adjacency, so high–angle-bound
+  meshes on finely-faceted boundaries are O(N²). The maintained-adjacency +
+  work-queue plan that closes this is scoped in
+  [docs/refinement-performance.md](docs/refinement-performance.md); the
+  small-feature termination work behind it is in
+  [docs/refinement-small-features.md](docs/refinement-small-features.md).
+- **A global (non-regional) area bound** is not part of the API (per-region max
+  area *is* honoured).
 - **Native platforms** other than Windows x64 need their shared library built
   and vendored.
 

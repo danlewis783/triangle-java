@@ -1,7 +1,10 @@
-# Slice 5 scope: terminating quality refinement on fine-featured boundaries
+# Slice 5: terminating quality refinement on fine-featured boundaries
 
-Status: **scoped, not implemented.** This is the design for closing the one
-remaining gap in the pure-Java mesher's refinement.
+Status: **shipped** (concentric-shell splitting + the Miller–Pav–Walkington skip
+rule, commit `57ad7c8`). The captured q=33 case now converges to a fully
+`MeshValidator`-valid mesh where it previously diverged. This doc is kept as the
+design record / rationale. For making that case *fast*, see
+[refinement-performance.md](refinement-performance.md).
 
 ## 1. The problem
 
