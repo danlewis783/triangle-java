@@ -1,9 +1,11 @@
 package com.acme.triangle.impl;
 
+import com.acme.triangle.MeshContractException;
 import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +31,17 @@ import java.util.Map;
  */
 public final class JavaTriangleMesher implements TriangleMesher {
 
-    private static final int MAX_ITERATIONS = 1_000_000;
+    /** Off-centre placement aims this many degrees above the requested bound so
+        new triangles clear the threshold rather than sitting exactly on it. */
+    private static final double OFF_CENTRE_MARGIN_DEG = 1.0;
+
+    /** Convergence backstop: cap the vertex count at this multiple of the input
+        size (or {@link #MIN_VERTEX_CAP}, whichever is larger). Off-centres make
+        achievable bounds converge well under this; the cap turns a bound no
+        Ruppert variant can satisfy (e.g. a high angle on a fine-featured input)
+        into a fast, typed failure instead of an unbounded loop. */
+    private static final int MAX_VERTEX_FACTOR = 50;
+    private static final int MIN_VERTEX_CAP = 10_000;
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
@@ -72,7 +84,8 @@ public final class JavaTriangleMesher implements TriangleMesher {
         IncrementalCdt mesh = new IncrementalCdt(
                 ConstrainedDelaunayTriangulator.triangulate(input));
 
-        for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
+        int maxVertices = Math.max(input.numberOfPoints * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
+        while (true) {
             TriangleMesherOutput snap = mesh.toOutput();
             List<double[]> points = pointList(snap);
             List<int[]> segments = segmentList(snap);
@@ -80,21 +93,27 @@ public final class JavaTriangleMesher implements TriangleMesher {
             int seg = encroachedSubsegment(snap, points, segments);
             if (seg >= 0) {
                 mesh.splitSegment(seg);
-                continue;
-            }
-            int bad = badTriangle(snap, points, bound, maxAreaByAttr);
-            if (bad < 0) {
-                return snap;                       /* quality achieved */
-            }
-            double[] centre = circumcentre(snap, points, bad);
-            int encroached = subsegmentEncroachedBy(centre, points, segments);
-            if (encroached >= 0) {
-                mesh.splitSegment(encroached);
             } else {
-                mesh.insertInteriorPoint(centre);
+                int bad = badTriangle(snap, points, bound, maxAreaByAttr);
+                if (bad < 0) {
+                    return snap;                   /* quality achieved */
+                }
+                double[] centre = offCentre(snap, points, bad, bound);
+                int encroached = subsegmentEncroachedBy(centre, points, segments);
+                if (encroached >= 0) {
+                    mesh.splitSegment(encroached);
+                } else {
+                    mesh.insertInteriorPoint(centre);
+                }
+            }
+
+            if (mesh.pointCount() > maxVertices) {
+                throw new MeshContractException(
+                        "refinement did not converge within " + maxVertices + " vertices",
+                        Collections.singletonList("quality: minimum angle bound "
+                                + bound + " degrees not reached"));
             }
         }
-        throw new IllegalStateException("refinement did not converge");
     }
 
     private static List<double[]> pointList(TriangleMesherOutput o) {
@@ -183,6 +202,70 @@ public final class JavaTriangleMesher implements TriangleMesher {
         double[] pa = points.get(a), pb = points.get(b);
         double dot = (p[0] - pa[0]) * (p[0] - pb[0]) + (p[1] - pa[1]) * (p[1] - pb[1]);
         return dot < 0;                             /* angle a-p-b obtuse */
+    }
+
+    /**
+     * Off-centre Steiner point (Ungor 2004) for a below-bound triangle: a point
+     * on the perpendicular bisector of the triangle's shortest edge, toward the
+     * apex, at the height where the new triangle on that edge just clears the
+     * angle bound; or the circumcentre if that is nearer. The bisector direction
+     * is taken from the shortest edge directly (not from the circumcentre, which
+     * is numerically unreliable for skinny triangles). Aims a small margin above
+     * the bound so the new triangle is not re-selected at exactly the threshold.
+     */
+    private static double[] offCentre(TriangleMesherOutput mesh, List<double[]> points,
+                                      int t, double boundDegrees) {
+        double[] a = points.get(mesh.triangleList[3 * t]);
+        double[] b = points.get(mesh.triangleList[3 * t + 1]);
+        double[] c = points.get(mesh.triangleList[3 * t + 2]);
+
+        double[] p, q, r;                          /* p,q = shortest edge; r = apex */
+        double ab = dist2(a, b), bc = dist2(b, c), ca = dist2(c, a);
+        if (ab <= bc && ab <= ca) {
+            p = a; q = b; r = c;
+        } else if (bc <= ab && bc <= ca) {
+            p = b; q = c; r = a;
+        } else {
+            p = c; q = a; r = b;
+        }
+
+        double e = Math.sqrt(dist2(p, q));
+        double mx = (p[0] + q[0]) / 2.0, my = (p[1] + q[1]) / 2.0;
+        double nx = -(q[1] - p[1]), ny = q[0] - p[0];   /* perpendicular to pq */
+        double nlen = Math.hypot(nx, ny);
+        if (nlen == 0) {
+            return circumcentre(mesh, points, t);
+        }
+        nx /= nlen;
+        ny /= nlen;
+        if ((r[0] - mx) * nx + (r[1] - my) * ny < 0) {  /* orient toward apex */
+            nx = -nx;
+            ny = -ny;
+        }
+
+        double targetAngle = Math.min(boundDegrees + OFF_CENTRE_MARGIN_DEG, 60.0);
+        double beta = 1.0 / (2.0 * Math.sin(Math.toRadians(targetAngle)));
+        double radicand = beta * beta - 0.25;
+        if (radicand <= 0) {
+            return circumcentre(mesh, points, t);
+        }
+        /* Height giving the new triangle radius-edge ratio beta. Two heights
+           qualify; take the tall one (apex out toward the circumcentre), which
+           makes a well-shaped triangle and inserts few points - the short root
+           puts the apex next to the edge and spawns slivers. */
+        double h = e * (beta + Math.sqrt(radicand));
+
+        double[] cc = circumcentre(mesh, points, t);
+        double dc = Math.hypot(cc[0] - mx, cc[1] - my);
+        if (dc > 0 && !Double.isNaN(dc) && !Double.isInfinite(dc) && h > dc) {
+            h = dc;                                /* don't overshoot the circumcentre */
+        }
+        return new double[]{mx + h * nx, my + h * ny};
+    }
+
+    private static double dist2(double[] a, double[] b) {
+        double dx = a[0] - b[0], dy = a[1] - b[1];
+        return dx * dx + dy * dy;
     }
 
     private static double[] circumcentre(TriangleMesherOutput mesh,
