@@ -4,7 +4,6 @@ import com.acme.triangle.MeshContractException;
 import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -90,19 +89,22 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
         int maxVertices = Math.max(input.numberOfPoints * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
         while (true) {
-            TriangleMesherOutput snap = mesh.toOutput();
-            List<double[]> points = pointList(snap);
-            List<int[]> segments = segmentList(snap);
+            /* Live views, re-fetched each iteration (the triangle/attr lists are
+               replaced on mutation), so we never snapshot the whole mesh. */
+            List<int[]> tris = mesh.trianglesView();
+            List<double[]> points = mesh.pointsView();
+            List<int[]> segments = mesh.segmentsView();
+            List<Double> attrs = mesh.attrsView();
 
-            int seg = encroachedSubsegment(snap, points, segments);
+            int seg = encroachedSubsegment(tris, points, segments);
             if (seg >= 0) {
                 mesh.splitSegment(seg);
             } else {
-                int bad = badTriangle(mesh, snap, points, cosSqBound, maxAreaByAttr);
+                int bad = badTriangle(mesh, tris, attrs, points, cosSqBound, maxAreaByAttr);
                 if (bad < 0) {
-                    return snap;                   /* quality achieved */
+                    return mesh.toOutput();        /* quality achieved: build output once */
                 }
-                double[] centre = offCentre(snap, points, bad, bound);
+                double[] centre = offCentre(tris, points, bad, bound);
                 int encroached = subsegmentEncroachedBy(centre, points, segments);
                 if (encroached >= 0) {
                     mesh.splitSegment(encroached);
@@ -120,36 +122,18 @@ public final class JavaTriangleMesher implements TriangleMesher {
         }
     }
 
-    private static List<double[]> pointList(TriangleMesherOutput o) {
-        List<double[]> pts = new ArrayList<>(o.numberOfPoints);
-        for (int i = 0; i < o.numberOfPoints; i++) {
-            pts.add(new double[]{o.pointList[2 * i], o.pointList[2 * i + 1]});
-        }
-        return pts;
-    }
-
-    private static List<int[]> segmentList(TriangleMesherOutput o) {
-        List<int[]> segs = new ArrayList<>(o.numberOfSegments);
-        for (int i = 0; i < o.numberOfSegments; i++) {
-            int marker = o.segmentMarkerList != null ? o.segmentMarkerList[i] : 0;
-            segs.add(new int[]{o.segmentList[2 * i], o.segmentList[2 * i + 1], marker});
-        }
-        return segs;
-    }
-
     /** First subsegment with an adjacent triangle apex inside its diametral disk.
         Indexes each edge to its (at most two) opposite apexes once - O(T) - so
         the segment scan is O(T + S) rather than O(S * T). */
-    private static int encroachedSubsegment(TriangleMesherOutput mesh,
+    private static int encroachedSubsegment(List<int[]> tris,
                                             List<double[]> points,
                                             List<int[]> segments) {
-        Map<Long, int[]> edgeApex = new HashMap<>(2 * mesh.numberOfTriangles + 1);
-        for (int t = 0; t < mesh.numberOfTriangles; t++) {
-            int c0 = mesh.triangleList[3 * t], c1 = mesh.triangleList[3 * t + 1],
-                    c2 = mesh.triangleList[3 * t + 2];
-            addApex(edgeApex, c1, c2, c0);
-            addApex(edgeApex, c2, c0, c1);
-            addApex(edgeApex, c0, c1, c2);
+        Map<Long, int[]> edgeApex = new HashMap<>(2 * tris.size() + 1);
+        for (int t = 0; t < tris.size(); t++) {
+            int[] tc = tris.get(t);
+            addApex(edgeApex, tc[1], tc[2], tc[0]);
+            addApex(edgeApex, tc[2], tc[0], tc[1]);
+            addApex(edgeApex, tc[0], tc[1], tc[2]);
         }
         for (int s = 0; s < segments.size(); s++) {
             int a = segments.get(s)[0], b = segments.get(s)[1];
@@ -196,17 +180,16 @@ public final class JavaTriangleMesher implements TriangleMesher {
         area, or below the angle bound and not an unsplittable small-feature
         triangle. Area is checked first (it always terminates); the skip rule
         applies only to the angle bound. */
-    private static int badTriangle(IncrementalCdt cdt, TriangleMesherOutput mesh,
-                                   List<double[]> points, double cosSqBound,
-                                   Map<Double, Double> maxAreaByAttr) {
-        boolean checkArea = !maxAreaByAttr.isEmpty() && mesh.triangleAttributeList != null;
-        for (int t = 0; t < mesh.numberOfTriangles; t++) {
-            int ia = mesh.triangleList[3 * t];
-            int ib = mesh.triangleList[3 * t + 1];
-            int ic = mesh.triangleList[3 * t + 2];
+    private static int badTriangle(IncrementalCdt cdt, List<int[]> tris,
+                                   List<Double> attrs, List<double[]> points,
+                                   double cosSqBound, Map<Double, Double> maxAreaByAttr) {
+        boolean checkArea = !maxAreaByAttr.isEmpty() && attrs != null;
+        for (int t = 0; t < tris.size(); t++) {
+            int[] tc = tris.get(t);
+            int ia = tc[0], ib = tc[1], ic = tc[2];
             double[] a = points.get(ia), b = points.get(ib), c = points.get(ic);
             if (checkArea) {
-                Double maxArea = maxAreaByAttr.get(mesh.triangleAttributeList[t]);
+                Double maxArea = maxAreaByAttr.get(attrs.get(t));
                 if (maxArea != null && triangleArea(a, b, c) > maxArea) {
                     return t;                               /* too large for region */
                 }
@@ -320,11 +303,10 @@ public final class JavaTriangleMesher implements TriangleMesher {
      * is numerically unreliable for skinny triangles). Aims a small margin above
      * the bound so the new triangle is not re-selected at exactly the threshold.
      */
-    private static double[] offCentre(TriangleMesherOutput mesh, List<double[]> points,
+    private static double[] offCentre(List<int[]> tris, List<double[]> points,
                                       int t, double boundDegrees) {
-        double[] a = points.get(mesh.triangleList[3 * t]);
-        double[] b = points.get(mesh.triangleList[3 * t + 1]);
-        double[] c = points.get(mesh.triangleList[3 * t + 2]);
+        int[] tc = tris.get(t);
+        double[] a = points.get(tc[0]), b = points.get(tc[1]), c = points.get(tc[2]);
 
         double[] p, q, r;                          /* p,q = shortest edge; r = apex */
         double ab = dist2(a, b), bc = dist2(b, c), ca = dist2(c, a);
@@ -341,7 +323,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
         double nx = -(q[1] - p[1]), ny = q[0] - p[0];   /* perpendicular to pq */
         double nlen = Math.hypot(nx, ny);
         if (nlen == 0) {
-            return circumcentre(mesh, points, t);
+            return circumcentre(tris, points, t);
         }
         nx /= nlen;
         ny /= nlen;
@@ -354,7 +336,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
         double beta = 1.0 / (2.0 * Math.sin(Math.toRadians(targetAngle)));
         double radicand = beta * beta - 0.25;
         if (radicand <= 0) {
-            return circumcentre(mesh, points, t);
+            return circumcentre(tris, points, t);
         }
         /* Height giving the new triangle radius-edge ratio beta. Two heights
            qualify; take the tall one (apex out toward the circumcentre), which
@@ -362,7 +344,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
            puts the apex next to the edge and spawns slivers. */
         double h = e * (beta + Math.sqrt(radicand));
 
-        double[] cc = circumcentre(mesh, points, t);
+        double[] cc = circumcentre(tris, points, t);
         double dc = Math.hypot(cc[0] - mx, cc[1] - my);
         if (dc > 0 && !Double.isNaN(dc) && !Double.isInfinite(dc) && h > dc) {
             h = dc;                                /* don't overshoot the circumcentre */
@@ -375,11 +357,9 @@ public final class JavaTriangleMesher implements TriangleMesher {
         return dx * dx + dy * dy;
     }
 
-    private static double[] circumcentre(TriangleMesherOutput mesh,
-                                         List<double[]> points, int t) {
-        double[] a = points.get(mesh.triangleList[3 * t]);
-        double[] b = points.get(mesh.triangleList[3 * t + 1]);
-        double[] c = points.get(mesh.triangleList[3 * t + 2]);
+    private static double[] circumcentre(List<int[]> tris, List<double[]> points, int t) {
+        int[] tc = tris.get(t);
+        double[] a = points.get(tc[0]), b = points.get(tc[1]), c = points.get(tc[2]);
         double d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
         double a2 = a[0] * a[0] + a[1] * a[1];
         double b2 = b[0] * b[0] + b[1] * b[1];

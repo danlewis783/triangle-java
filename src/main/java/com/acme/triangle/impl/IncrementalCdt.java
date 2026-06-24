@@ -82,6 +82,29 @@ final class IncrementalCdt {
         return vseg.get(i);
     }
 
+    /* Live views for the refinement loop, so it reads the mesh in place rather
+       than snapshotting it every iteration. The triangle and attribute lists are
+       replaced on each mutation, so callers must re-fetch them after any
+       mutation (the refine loop does, at the top of each iteration). */
+
+    List<double[]> pointsView() {
+        return points;
+    }
+
+    List<int[]> trianglesView() {
+        return tris;
+    }
+
+    /** Each entry is {a, b, marker, origOrg, origDest}. */
+    List<int[]> segmentsView() {
+        return segments;
+    }
+
+    /** Per-triangle region attributes parallel to {@link #trianglesView()}, or null. */
+    List<Double> attrsView() {
+        return attrs;
+    }
+
     int pointCount() {
         return points.size();
     }
