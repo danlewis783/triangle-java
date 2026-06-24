@@ -133,22 +133,49 @@ public final class JavaTriangleMesher implements TriangleMesher {
         return segs;
     }
 
-    /** First subsegment with an adjacent triangle apex inside its diametral disk. */
+    /** First subsegment with an adjacent triangle apex inside its diametral disk.
+        Indexes each edge to its (at most two) opposite apexes once - O(T) - so
+        the segment scan is O(T + S) rather than O(S * T). */
     private static int encroachedSubsegment(TriangleMesherOutput mesh,
                                             List<double[]> points,
                                             List<int[]> segments) {
+        Map<Long, int[]> edgeApex = new HashMap<>(2 * mesh.numberOfTriangles + 1);
+        for (int t = 0; t < mesh.numberOfTriangles; t++) {
+            int c0 = mesh.triangleList[3 * t], c1 = mesh.triangleList[3 * t + 1],
+                    c2 = mesh.triangleList[3 * t + 2];
+            addApex(edgeApex, c1, c2, c0);
+            addApex(edgeApex, c2, c0, c1);
+            addApex(edgeApex, c0, c1, c2);
+        }
         for (int s = 0; s < segments.size(); s++) {
             int a = segments.get(s)[0], b = segments.get(s)[1];
-            for (int t = 0; t < mesh.numberOfTriangles; t++) {
-                int c0 = mesh.triangleList[3 * t], c1 = mesh.triangleList[3 * t + 1],
-                        c2 = mesh.triangleList[3 * t + 2];
-                int apex = thirdVertex(c0, c1, c2, a, b);
-                if (apex >= 0 && inDiametralDisk(points, a, b, points.get(apex))) {
+            int[] apexes = edgeApex.get(key(a, b));
+            if (apexes == null) {
+                continue;
+            }
+            for (int ap : apexes) {
+                if (ap >= 0 && inDiametralDisk(points, a, b, points.get(ap))) {
                     return s;
                 }
             }
         }
         return -1;
+    }
+
+    /** Record {@code apex} as opposite the edge (u,w); a manifold edge has &le;2. */
+    private static void addApex(Map<Long, int[]> edgeApex, int u, int w, int apex) {
+        long k = key(u, w);
+        int[] e = edgeApex.get(k);
+        if (e == null) {
+            edgeApex.put(k, new int[]{apex, -1});
+        } else if (e[1] < 0) {
+            e[1] = apex;
+        }
+    }
+
+    private static long key(int a, int b) {
+        int lo = Math.min(a, b), hi = Math.max(a, b);
+        return ((long) lo << 32) | (hi & 0xffffffffL);
     }
 
     private static int subsegmentEncroachedBy(double[] p, List<double[]> points,
@@ -237,17 +264,6 @@ public final class JavaTriangleMesher implements TriangleMesher {
     private static double triangleArea(double[] a, double[] b, double[] c) {
         return Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
                 / 2.0;
-    }
-
-    private static int thirdVertex(int c0, int c1, int c2, int a, int b) {
-        boolean h0a = c0 == a, h1a = c1 == a, h2a = c2 == a;
-        boolean h0b = c0 == b, h1b = c1 == b, h2b = c2 == b;
-        if (!(h0a || h1a || h2a) || !(h0b || h1b || h2b)) {
-            return -1;                              /* triangle lacks the edge */
-        }
-        if (c0 != a && c0 != b) return c0;
-        if (c1 != a && c1 != b) return c1;
-        return c2;
     }
 
     private static boolean inDiametralDisk(List<double[]> points, int a, int b,
