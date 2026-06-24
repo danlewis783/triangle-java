@@ -35,15 +35,24 @@ import java.util.Set;
  */
 final class IncrementalCdt {
 
+    /** Vertex provenance, needed by the small-feature refinement rules. */
+    static final int INPUT = 0;     /* an original input vertex (segment joins) */
+    static final int SEGMENT = 1;   /* created by splitting a segment (on its interior) */
+    static final int FREE = 2;      /* an interior Steiner point */
+
     private final List<double[]> points = new ArrayList<>();
-    private List<int[]> tris = new ArrayList<>();            /* CCW {a, b, c} */
-    private List<Double> attrs;                              /* per-tri attr, or null */
-    private final List<int[]> segments = new ArrayList<>();  /* {a, b, marker} */
+    private final List<Integer> vtype = new ArrayList<>();    /* INPUT/SEGMENT/FREE per vertex */
+    private final List<int[]> vseg = new ArrayList<>();       /* {origOrg,origDest} for SEGMENT, else null */
+    private List<int[]> tris = new ArrayList<>();             /* CCW {a, b, c} */
+    private List<Double> attrs;                               /* per-tri attr, or null */
+    private final List<int[]> segments = new ArrayList<>();   /* {a,b,marker,origOrg,origDest} */
     private final Set<Long> segSet = new HashSet<>();
 
     IncrementalCdt(TriangleMesherOutput base) {
         for (int i = 0; i < base.numberOfPoints; i++) {
             points.add(new double[]{base.pointList[2 * i], base.pointList[2 * i + 1]});
+            vtype.add(INPUT);
+            vseg.add(null);
         }
         boolean haveAttr = base.triangleAttributeList != null;
         attrs = haveAttr ? new ArrayList<>() : null;
@@ -58,10 +67,19 @@ final class IncrementalCdt {
             for (int i = 0; i < base.numberOfSegments; i++) {
                 int a = base.segmentList[2 * i], b = base.segmentList[2 * i + 1];
                 int marker = base.segmentMarkerList != null ? base.segmentMarkerList[i] : 0;
-                segments.add(new int[]{a, b, marker});
+                segments.add(new int[]{a, b, marker, a, b});   /* original endpoints = a, b */
                 segSet.add(key(a, b));
             }
         }
+    }
+
+    int vertexType(int i) {
+        return vtype.get(i);
+    }
+
+    /** For a SEGMENT vertex, the original input segment's endpoints; else null. */
+    int[] vertexSeg(int i) {
+        return vseg.get(i);
     }
 
     int pointCount() {
@@ -85,6 +103,8 @@ final class IncrementalCdt {
         }
         int pIdx = points.size();
         points.add(p);
+        vtype.add(FREE);
+        vseg.add(null);
         insertViaCavity(pIdx, new int[]{start}, -1L);
         return pIdx;
     }
@@ -105,23 +125,56 @@ final class IncrementalCdt {
      */
     int splitSegment(int segIndex) {
         int[] seg = segments.get(segIndex);
-        int a = seg[0], b = seg[1], marker = seg[2];
+        int a = seg[0], b = seg[1], marker = seg[2], origOrg = seg[3], origDest = seg[4];
         int[] seeds = incidentTriangles(a, b);
         if (seeds.length == 0) {
             throw new IllegalStateException("segment (" + a + "," + b + ") is not an edge");
         }
+        double frac = shellSplitFraction(a, b);
         double[] pa = points.get(a), pb = points.get(b);
         int mIdx = points.size();
-        points.add(new double[]{(pa[0] + pb[0]) / 2.0, (pa[1] + pb[1]) / 2.0});
+        points.add(new double[]{pa[0] + frac * (pb[0] - pa[0]),
+                pa[1] + frac * (pb[1] - pa[1])});
+        vtype.add(SEGMENT);
+        vseg.add(new int[]{origOrg, origDest});
 
         segSet.remove(key(a, b));            /* let the cavity span the old segment */
         insertViaCavity(mIdx, seeds, key(a, b));
 
-        segments.set(segIndex, new int[]{a, mIdx, marker});
-        segments.add(new int[]{mIdx, b, marker});
+        segments.set(segIndex, new int[]{a, mIdx, marker, origOrg, origDest});
+        segments.add(new int[]{mIdx, b, marker, origOrg, origDest});
         segSet.add(key(a, mIdx));
         segSet.add(key(mIdx, b));
         return mIdx;
+    }
+
+    /**
+     * Concentric-shell split fraction (Triangle's rule, triangle.c:8163): if an
+     * endpoint is an original join vertex, split at a power-of-two distance from
+     * it so the split points around a join land on shared "shells" (equal radii),
+     * which keeps the bridging triangles isosceles instead of ever-thinner
+     * slivers and lets {@code badTriangle} recognize them as unsplittable.
+     * Away from joins, split at the midpoint.
+     */
+    private double shellSplitFraction(int a, int b) {
+        boolean acuteOrg = vtype.get(a) == INPUT;
+        boolean acuteDest = vtype.get(b) == INPUT;
+        if (!acuteOrg && !acuteDest) {
+            return 0.5;
+        }
+        double len = Math.sqrt(dist2(points.get(a), points.get(b)));
+        double npot = 1.0;
+        while (len > 3.0 * npot) {
+            npot *= 2.0;
+        }
+        while (len < 1.5 * npot) {
+            npot *= 0.5;
+        }
+        double split = npot / len;          /* fraction from the origin endpoint */
+        if (acuteDest) {
+            split = 1.0 - split;            /* measure from the destination instead */
+        }
+        return split;
     }
 
     /**
@@ -343,6 +396,11 @@ final class IncrementalCdt {
     private int orientXY(int a, int b, double x, double y) {
         return Predicates.orient2d(points.get(a)[0], points.get(a)[1],
                 points.get(b)[0], points.get(b)[1], x, y);
+    }
+
+    private static double dist2(double[] p, double[] q) {
+        double dx = p[0] - q[0], dy = p[1] - q[1];
+        return dx * dx + dy * dy;
     }
 
     private static long key(int a, int b) {

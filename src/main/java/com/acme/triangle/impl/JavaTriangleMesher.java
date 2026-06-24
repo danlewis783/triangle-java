@@ -94,7 +94,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
             if (seg >= 0) {
                 mesh.splitSegment(seg);
             } else {
-                int bad = badTriangle(snap, points, bound, maxAreaByAttr);
+                int bad = badTriangle(mesh, snap, points, bound, maxAreaByAttr);
                 if (bad < 0) {
                     return snap;                   /* quality achieved */
                 }
@@ -161,24 +161,77 @@ public final class JavaTriangleMesher implements TriangleMesher {
         return -1;
     }
 
-    /** A triangle below the angle bound, or larger than its region's max area. */
-    private static int badTriangle(TriangleMesherOutput mesh, List<double[]> points,
-                                   double bound, Map<Double, Double> maxAreaByAttr) {
+    /** The first triangle that must be refined: larger than its region's max
+        area, or below the angle bound and not an unsplittable small-feature
+        triangle. Area is checked first (it always terminates); the skip rule
+        applies only to the angle bound. */
+    private static int badTriangle(IncrementalCdt cdt, TriangleMesherOutput mesh,
+                                   List<double[]> points, double bound,
+                                   Map<Double, Double> maxAreaByAttr) {
         for (int t = 0; t < mesh.numberOfTriangles; t++) {
-            double[] a = points.get(mesh.triangleList[3 * t]);
-            double[] b = points.get(mesh.triangleList[3 * t + 1]);
-            double[] c = points.get(mesh.triangleList[3 * t + 2]);
-            if (minAngleDeg(a, b, c) < bound) {
-                return t;                                   /* skinny */
-            }
+            int ia = mesh.triangleList[3 * t];
+            int ib = mesh.triangleList[3 * t + 1];
+            int ic = mesh.triangleList[3 * t + 2];
+            double[] a = points.get(ia), b = points.get(ib), c = points.get(ic);
             if (!maxAreaByAttr.isEmpty() && mesh.triangleAttributeList != null) {
                 Double maxArea = maxAreaByAttr.get(mesh.triangleAttributeList[t]);
                 if (maxArea != null && triangleArea(a, b, c) > maxArea) {
                     return t;                               /* too large for region */
                 }
             }
+            if (minAngleDeg(a, b, c) < bound && !unsplittable(cdt, points, ia, ib, ic)) {
+                return t;                                   /* skinny and fixable */
+            }
         }
         return -1;
+    }
+
+    /**
+     * Miller-Pav-Walkington rule (triangle.c:4084): a skinny triangle is left
+     * unsplit if its shortest edge's endpoints both lie in segment interiors, on
+     * two different input segments meeting at a join vertex, equidistant from
+     * that join (on a common concentric shell). Such a triangle's poor angle is
+     * imposed by the input near that feature; refining it only cascades. The
+     * concentric-shell segment splitting in {@link IncrementalCdt} is what makes
+     * the endpoints land equidistant so this rule can recognize them.
+     */
+    private static boolean unsplittable(IncrementalCdt cdt, List<double[]> points,
+                                        int ia, int ib, int ic) {
+        double ab = dist2(points.get(ia), points.get(ib));
+        double bc = dist2(points.get(ib), points.get(ic));
+        double ca = dist2(points.get(ic), points.get(ia));
+        int b1, b2;                                         /* shortest-edge endpoints */
+        if (ab <= bc && ab <= ca) {
+            b1 = ia; b2 = ib;
+        } else if (bc <= ab && bc <= ca) {
+            b1 = ib; b2 = ic;
+        } else {
+            b1 = ic; b2 = ia;
+        }
+
+        if (cdt.vertexType(b1) != IncrementalCdt.SEGMENT
+                || cdt.vertexType(b2) != IncrementalCdt.SEGMENT) {
+            return false;
+        }
+        int[] s1 = cdt.vertexSeg(b1), s2 = cdt.vertexSeg(b2);
+        if (s1 == null || s2 == null) {
+            return false;
+        }
+        if ((s1[0] == s2[0] && s1[1] == s2[1]) || (s1[0] == s2[1] && s1[1] == s2[0])) {
+            return false;                          /* same input segment: split normally */
+        }
+        int join = -1;
+        if (s1[0] == s2[0] || s1[0] == s2[1]) {
+            join = s1[0];
+        } else if (s1[1] == s2[0] || s1[1] == s2[1]) {
+            join = s1[1];
+        }
+        if (join < 0) {
+            return false;                          /* the two segments do not meet */
+        }
+        double d1 = dist2(points.get(b1), points.get(join));
+        double d2 = dist2(points.get(b2), points.get(join));
+        return d1 < 1.001 * d2 && d1 > 0.999 * d2;
     }
 
     private static double triangleArea(double[] a, double[] b, double[] c) {
