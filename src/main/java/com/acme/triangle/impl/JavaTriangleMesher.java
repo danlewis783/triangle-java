@@ -89,8 +89,12 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
         int maxVertices = Math.max(input.numberOfPoints * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
         while (true) {
-            /* Live views, re-fetched each iteration (the triangle/attr lists are
-               replaced on mutation), so we never snapshot the whole mesh. */
+            /* Live views: with maintained adjacency these are stable lists
+               mutated in place (dead triangles appear as null, so the scans skip
+               them), never snapshotted. Triangle indices are stable but sparse,
+               and a mutation may free/reuse slots, so an index is only valid until
+               the next split/insert - which is why each is consumed within this
+               iteration. */
             List<int[]> tris = mesh.trianglesView();
             List<double[]> points = mesh.pointsView();
             List<int[]> segments = mesh.segmentsView();
@@ -131,6 +135,9 @@ public final class JavaTriangleMesher implements TriangleMesher {
         Map<Long, int[]> edgeApex = new HashMap<>(2 * tris.size() + 1);
         for (int t = 0; t < tris.size(); t++) {
             int[] tc = tris.get(t);
+            if (tc == null) {
+                continue;                           /* dead slot (maintained adjacency) */
+            }
             addApex(edgeApex, tc[1], tc[2], tc[0]);
             addApex(edgeApex, tc[2], tc[0], tc[1]);
             addApex(edgeApex, tc[0], tc[1], tc[2]);
@@ -186,6 +193,9 @@ public final class JavaTriangleMesher implements TriangleMesher {
         boolean checkArea = !maxAreaByAttr.isEmpty() && attrs != null;
         for (int t = 0; t < tris.size(); t++) {
             int[] tc = tris.get(t);
+            if (tc == null) {
+                continue;                           /* dead slot (maintained adjacency) */
+            }
             int ia = tc[0], ib = tc[1], ic = tc[2];
             double[] a = points.get(ia), b = points.get(ib), c = points.get(ic);
             if (checkArea) {

@@ -1,7 +1,7 @@
 # Slice 5c: making fine-feature refinement fast
 
-Status: **constant-factor wins shipped; the structural change (5c-1) is the
-focused next effort.** Companion to
+Status: **maintained adjacency (5c-1) shipped; the work-queue slices (5c-2/5c-3)
+are the focused next effort.** Companion to
 [refinement-small-features.md](refinement-small-features.md) (slices 5a/5b —
 *terminating* refinement on fine-featured boundaries, shipped). This doc covers
 making that case *fast*.
@@ -21,13 +21,23 @@ green throughout:
 | encroachment scan O(S·T)→O(S+T), edge→apex index | 58 s | `306942a` |
 | drop trig: squared-cosine bad-triangle test (no `acos`) | **13 s** | `eda8702` |
 | read mesh in place (no per-iteration snapshot) | **9.7 s** | `26ed658` |
+| maintained adjacency: O(cavity) insertion, no per-insertion rebuild (5c-1) | **~2.3 s** | this round |
 
-**Cheap constant-factor wins are now exhausted.** Two gaps remain:
+(Timings re-measured on this machine: the 9.7 s baseline above clocked 8.2 s /
+8,281 triangles here; with maintained adjacency the same case is ~2.3 s / 5,801
+triangles — a ~3.4× drop. The triangle count *changed* because new fan triangles
+now reuse freed slots rather than always appending, so `badTriangle`'s
+first-by-scan choice visits a different — but still `MeshValidator`-valid —
+refinement sequence; here it happens to land on a smaller mesh. The `bench heavy`
+area cases moved ≤ ~10 % either way, no regression.)
 
-- **Speed** — this doc. The loop is still O(N²): each insertion rebuilds
-  adjacency, and the encroachment index is rebuilt each iteration. Needs the
-  structural change in §3.
-- **Size** — we make ~3× native's triangle count (no free-vertex deletion;
+**Cheap constant-factor wins are exhausted and the per-insertion adjacency
+rebuild (the dominant O(T)) is gone.** Two gaps remain:
+
+- **Speed** — this doc. The loop is *still* O(N²) per the rescans kept on top:
+  `badTriangle` and the encroachment index are rebuilt each iteration. Removing
+  those is 5c-2/5c-3 (§3.2–3.3); insertion itself is now O(cavity).
+- **Size** — we make ~2–3× native's triangle count (no free-vertex deletion;
   simpler off-centre/ordering). Separate effort, but cutting N also cuts the
   O(N²) constant.
 
@@ -59,15 +69,25 @@ constant-factor trick will move it.
 Mirrors Triangle's `enforcequality` (triangle.c:8416), which is fast precisely
 because it never rescans the whole mesh and never rebuilds adjacency.
 
-### 3.1 Maintained adjacency (stable triangle IDs) — slice 5c-1, the hard part
+### 3.1 Maintained adjacency (stable triangle IDs) — slice 5c-1, **shipped**
 
-Today `IncrementalCdt` stores `List<int[]> tris` where a triangle's identity is
-its list position; every insertion rebuilds the list (reindexing) and adjacency
-is recomputed via a `HashMap`
-([`IncrementalCdt.insertViaCavity`](../src/main/java/com/acme/triangle/impl/IncrementalCdt.java)).
-This O(T)-per-insertion rebuild is the dominant remaining cost.
+Done. `IncrementalCdt` now stores stable triangle ids (slot indices) each
+carrying their own 3 neighbour ids; deleted triangles are nulled and their slots
+queued for reuse, and the live views carry holes that scanning consumers skip.
+Insertion walks the cavity through the maintained links (O(cavity), with a
+generation-stamped membership test so there is no full-size visited clear) and
+relinks the new fan locally; `toOutput` compacts and emits the maintained
+adjacency, so the `MeshValidator` neighbour-slot invariants are a direct oracle.
+A debug `adjacencyConsistent()` cross-checks the hand-relinked links against a
+from-scratch rebuild and is asserted in `IncrementalCdtTest`. The original design
+notes are kept below as the record.
 
-Change to **stable triangle IDs with incremental neighbour links**:
+The previous shape stored `List<int[]> tris` where a triangle's identity was its
+list position; every insertion rebuilt the list (reindexing) and recomputed
+adjacency via a `HashMap` — the O(T)-per-insertion rebuild that was the dominant
+remaining cost.
+
+Stable triangle IDs with incremental neighbour links:
 
 - A triangle record holds its 3 corners, 3 neighbour IDs (or −1), its region
   attribute, and a liveness flag. Deleted triangles are marked dead and their
@@ -136,14 +156,15 @@ of full rescans.
 
 ## 4. Sub-slices and status
 
-1. **5c-1 — maintained adjacency.** NOT started. The bulk and the risk (mesh
-   surgery; see the fiddly cases in §3.1). Convert `IncrementalCdt` to stable IDs
-   + incremental neighbour links; keep the existing rescan-based loop on top.
-   Removes the per-insertion adjacency rebuild — expected the largest remaining
-   drop. Self-contained; the oracle catches topology errors.
+1. **5c-1 — maintained adjacency.** **DONE** (this round; 8.2 → ~2.3 s on the
+   q=33 case, 384 tests green). Stable IDs + incremental neighbour links with the
+   existing rescan-based loop kept on top; removed the per-insertion adjacency
+   rebuild (insertion is now O(cavity)). The fiddly segment-split cases in §3.1
+   are handled; the oracle (and `adjacencyConsistent()`) caught topology errors
+   during development.
 2. **5c-2 — bad-triangle length queue + dirty re-testing.** NOT started. Removes
-   the per-iteration `badTriangle` rescan. Needs 5c-1 (stable IDs for queue
-   entries).
+   the per-iteration `badTriangle` rescan — now the dominant remaining O(T) per
+   iteration. Stable IDs (5c-1) make queue entries safe to carry.
 3. **5c-3 — encroached-subsegment queue.** NOT started (the snapshot half is
    already done). Removes the per-iteration encroachment rebuild.
 
@@ -159,17 +180,18 @@ Same oracle as everything else.
   and the `refinesAFacetedHoleAtAHighAngleBound` (q=33) regression. The
   neighbour-slot and topology invariants in `MeshValidator` directly check the
   adjacency 5c-1 maintains by hand — a precise oracle.
-- **Speed target:** the q=33 captured case (currently 9.7 s; native 105 ms) via
-  `gradlew bench --args="src/bench/resources/inputs/regression"`, or the timing
-  harness pattern used this round (mesh it, print tris/ms/violations).
+- **Speed target:** the q=33 captured case (now ~2.3 s after 5c-1; native 105 ms)
+  via `gradlew bench --args="src/bench/resources/inputs/regression"`, or the
+  timing harness pattern used this round (mesh it, print tris/ms/violations).
 - Watch the synthetic area cases (`bench heavy`) for no regression.
 
 ## 6. Risks
 
 - **Maintained adjacency is real mesh surgery** (relinking on cavity insertion and
-  segment split — see §3.1's fiddly cases). The genuinely hard part. Mitigation:
-  validate after every sub-slice; consider a debug assertion that cross-checks
-  maintained adjacency against a fresh rebuild on small inputs.
+  segment split — see §3.1's fiddly cases). The genuinely hard part — now done
+  (5c-1). Mitigation in place: validate after every sub-slice, plus the debug
+  `adjacencyConsistent()` cross-check of maintained links against a fresh rebuild,
+  asserted in `IncrementalCdtTest`.
 - **Stale queue entries** — re-validate on dequeue (triangle.c:8313).
 - **Don't reorder by angle** — use shortest-edge length for the queue.
 

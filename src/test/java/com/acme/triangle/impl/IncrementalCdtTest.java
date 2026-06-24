@@ -42,6 +42,9 @@ class IncrementalCdtTest {
                     mesh.insertInteriorPoint(mesh.centroidOfLargestTriangle());
                 }
 
+                assertThat(mesh.adjacencyConsistent())
+                        .as("maintained adjacency matches a rebuild for %s", s.name)
+                        .isTrue();
                 TriangleMesherOutput out = mesh.toOutput();
                 assertThat(MeshValidator.validate(out, structuralOnly(s.input)))
                         .as("incremental CDT valid for %s", s.name)
@@ -75,6 +78,9 @@ class IncrementalCdtTest {
                     mesh.insertInteriorPoint(mesh.centroidOfLargestTriangle());
                 }
 
+                assertThat(mesh.adjacencyConsistent())
+                        .as("maintained adjacency matches a rebuild after splits for %s", s.name)
+                        .isTrue();
                 TriangleMesherOutput out = mesh.toOutput();
                 assertThat(MeshValidator.validate(out, structuralOnly(s.input)))
                         .as("incremental CDT valid after splits for %s", s.name)
