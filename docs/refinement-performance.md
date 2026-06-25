@@ -272,10 +272,9 @@ for *if a future input demands it*, roughly in order of likely payoff.
   topology invariants check the maintained adjacency by hand;
   `adjacencyConsistent()` cross-checks it against a rebuild on the scenario inputs.
 - **Speed/size:** `gradlew bench --args="src/bench/resources/inputs/regression"`
-  for the q=33 captured case (tris / java_ms / native_ms / ratio), and
-  `gradlew bench --args="heavy"` for the synthetic area + quality cases. Watch the
-  heavy area cases for no size regression after any ordering change. The bench
-  prints java's triangle count but not native's; the §5 java-vs-native size table
-  was taken by temporarily also printing `nat.mesh(in).numberOfTriangles` in
-  `MesherBenchmark.row` (a throwaway diagnostic — re-add it if you need to recheck
-  size against native).
+  for the q=33 captured case and `gradlew bench --args="heavy"` for the synthetic
+  area + quality cases. Each row prints `tri` (java) next to `nat_tri` (native)
+  alongside `java_ms` / `native_ms` / `ratio`, so both the speed and the size
+  comparison are built in — watch the area cases for no size regression after any
+  ordering change. The §5 size table was taken straight from these `tri` vs
+  `nat_tri` columns.

@@ -118,8 +118,8 @@ public final class MesherBenchmark {
     }
 
     private static void printHeader() {
-        System.out.printf("%-24s %8s %8s %4s %12s %12s %9s%n",
-                "case", "points", "tri", "q", "java_ms", "native_ms", "ratio");
+        System.out.printf("%-24s %8s %8s %8s %4s %12s %12s %9s%n",
+                "case", "points", "tri", "nat_tri", "q", "java_ms", "native_ms", "ratio");
     }
 
     private static void printUsageAndExit() {
@@ -135,6 +135,7 @@ public final class MesherBenchmark {
                             String label, TriangleMesherInput in, int reps) {
         TriangleMesherOutput javaSample = java.mesh(in);
         int triangles = javaSample.numberOfTriangles;
+        int nativeTriangles = nat.mesh(in).numberOfTriangles;
 
         for (int i = 0; i < 2; i++) {                 /* warm-up / JIT */
             java.mesh(in);
@@ -157,8 +158,9 @@ public final class MesherBenchmark {
         double nm = nt / 1e6 / reps;
         double ratio = nm == 0.0 ? Double.NaN : jm / nm;
 
-        System.out.printf("%-24s %8d %8d %4.0f %12.3f %12.3f %9.1f%n",
-                truncate(label, 24), in.numberOfPoints, triangles, in.minAngleDegrees, jm, nm, ratio);
+        System.out.printf("%-24s %8d %8d %8d %4.0f %12.3f %12.3f %9.1f%n",
+                truncate(label, 24), in.numberOfPoints, triangles, nativeTriangles,
+                in.minAngleDegrees, jm, nm, ratio);
     }
 
     private static int repetitionsFor(TriangleMesherInput in) {
