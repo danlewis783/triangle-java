@@ -1,224 +1,244 @@
-# Slice 5c: making fine-feature refinement fast
+# Refinement performance: from 74 s to 0.17 s
 
-Status: **slice 5c complete — maintained adjacency (5c-1), the bad-triangle
-length queue (5c-2), and the maintained encroachment index (5c-3) are all
-shipped. The q=33 case is now ~0.17 s (was 74 s), ~1.6× native.** Companion to
-[refinement-small-features.md](refinement-small-features.md) (slices 5a/5b —
-*terminating* refinement on fine-featured boundaries, shipped). This doc covers
-making that case *fast*.
+Status: **complete (slice 5c).** This is the record of how `JavaTriangleMesher`'s
+quality refinement went from pathologically slow to ~1.6× native on the hard
+case — the steps taken, the lessons, and what is left. Companion to
+[refinement-small-features.md](refinement-small-features.md) (slices 5/5a/5b —
+making that case *terminate*, the prerequisite; design record).
 
-## 1. Where we are
+## 1. The benchmark and the result
 
-The benchmark is the captured q=33 fine-hole case
-(`src/bench/resources/inputs/regression/rectangle-solid-with-hole.json`: 2×1
-rectangle, 256-facet hole, region max area ≈ 0.00308). It is correct (a fully
-`MeshValidator`-valid mesh) but slower than native; native does it in 2,745
-triangles / 105 ms. Wall-clock progress this round, all committed, 384 tests
-green throughout:
-
-| step | time | commit |
-|---|---|---|
-| start (after slice 5 correctness) | 74 s | — |
-| encroachment scan O(S·T)→O(S+T), edge→apex index | 58 s | `306942a` |
-| drop trig: squared-cosine bad-triangle test (no `acos`) | **13 s** | `eda8702` |
-| read mesh in place (no per-iteration snapshot) | **9.7 s** | `26ed658` |
-| maintained adjacency: O(cavity) insertion, no per-insertion rebuild (5c-1) | **~2.3 s** | `3a62997` |
-| bad-triangle length queue + dirty re-testing (5c-2) | **~0.5 s** | `78b55b0` |
-| maintained encroachment index, no per-iteration edge→apex rebuild (5c-3) | **~0.17 s** | this round |
-
-(Timings re-measured on this machine: the 9.7 s baseline clocked 8.2 s / 8,281
-triangles here; 5c-1 took it to ~2.3 s / 5,801 triangles; 5c-2 to ~0.5 s / 2,644
-triangles; 5c-3 to ~0.17 s, **still 2,644 triangles**. The count *changed* through
-5c-1 (slot reuse) and 5c-2 (worst-first-by-shortest-edge — Triangle's actual
-scheme, markedly better: below native's 2,745) because each alters the refinement
-*order*; 5c-3 only changes *how* encroachment is looked up, not the order, so it
-is behaviour-preserving — the q=33 case and all `bench heavy` cases keep
-byte-identical triangle counts, a built-in correctness check. ~0.17 s is ~1.6×
-native's 105 ms.)
-
-**Slice 5c is done:** the per-insertion adjacency rebuild (5c-1), the
-per-iteration bad-triangle rescan (5c-2), and the per-iteration encroachment
-edge→apex rebuild (5c-3) are all gone. The loop is now O(cavity) per insertion
-with O(S) per-iteration segment work. The only remaining gap is **size** — the
-synthetic area cases are still a touch above native; free-vertex deletion is a
-separate effort.
-
-## 2. What was already done, and the lesson
-
-In order (see the commits above):
-
-1. **Encroachment scan O(S·T) → O(S+T)** via an edge→apex index
-   (`encroachedSubsegment`): 74 → 58 s.
-2. **Squared-cosine bad-triangle test** (`belowAngleBound`, mirrors
-   triangle.c:4036): replaced `minAngleDeg`'s three `Math.acos` per triangle
-   with the squared cosine of the angle opposite the shortest edge vs
-   `cos²(bound)`. **58 → 13 s — the biggest single win.** `acos` was the dominant
-   cost (~190M calls).
-3. **Read the mesh in place** (`IncrementalCdt` live views; build the output once
-   at convergence instead of snapshotting every iteration): 13 → 9.7 s.
-
-**The lesson (do not re-learn):** measure, don't guess. Step 3 was tried *before*
-step 2 and showed **zero** gain — because `acos` (step 2) was masking it. Only
-after the trig was gone did removing the snapshot become a real win. Conversely,
-the snapshot *looked* like the obvious waste but wasn't the bottleneck until the
-real one was removed first.
-
-What's left is genuinely structural (per-insertion O(T) work); no further
-constant-factor trick will move it.
-
-## 3. The remaining fix: maintained adjacency + work queues
-
-Mirrors Triangle's `enforcequality` (triangle.c:8416), which is fast precisely
-because it never rescans the whole mesh and never rebuilds adjacency.
-
-### 3.1 Maintained adjacency (stable triangle IDs) — slice 5c-1, **shipped**
-
-Done. `IncrementalCdt` now stores stable triangle ids (slot indices) each
-carrying their own 3 neighbour ids; deleted triangles are nulled and their slots
-queued for reuse, and the live views carry holes that scanning consumers skip.
-Insertion walks the cavity through the maintained links (O(cavity), with a
-generation-stamped membership test so there is no full-size visited clear) and
-relinks the new fan locally; `toOutput` compacts and emits the maintained
-adjacency, so the `MeshValidator` neighbour-slot invariants are a direct oracle.
-A debug `adjacencyConsistent()` cross-checks the hand-relinked links against a
-from-scratch rebuild and is asserted in `IncrementalCdtTest`. The original design
-notes are kept below as the record.
-
-The previous shape stored `List<int[]> tris` where a triangle's identity was its
-list position; every insertion rebuilt the list (reindexing) and recomputed
-adjacency via a `HashMap` — the O(T)-per-insertion rebuild that was the dominant
-remaining cost.
-
-Stable triangle IDs with incremental neighbour links:
-
-- A triangle record holds its 3 corners, 3 neighbour IDs (or −1), its region
-  attribute, and a liveness flag. Deleted triangles are marked dead and their
-  slots freed for reuse (compact only when building the final output).
-- `insertViaCavity` keeps its current cavity logic, but walks neighbours from the
-  seed (O(cavity)) instead of building global adjacency, and **relinks** locally:
-  the new fan triangles link to each other and to the cavity's outer ring, and
-  the outer-ring triangles' links into the cavity are repointed to the new fan.
-  Standard Bowyer–Watson with adjacency maintenance. This makes insertion
-  O(cavity).
-- **Fan linking detail** (worked out, captured so it isn't re-derived): build new
-  triangles as `{u, w, p}` with the inserted vertex `p` always at corner 2 — the
-  boundary edge `(u,w)` is then always the edge opposite corner 2, so its
-  neighbour is the outer-ring triangle. The two interior fan edges are `(p,u)`
-  (opp corner 1) and `(w,p)` (opp corner 0). Pair adjacent fan triangles by
-  cavity-boundary vertex: each boundary vertex `v` (≠ p) appears in exactly two
-  new triangles — once as a `u` (its `(p,u)` edge, slot 1) and once as a `w` (its
-  `(w,p)` edge, slot 0) — link those two.
-- **Fiddly cases to get right:** the segment-split skip-edge (the split edge is
-  not re-fanned, so its endpoints `a,b` appear in only one fan triangle each —
-  their `(a,p)`/`(p,b)` edges are the new segment edges, neighboured across the
-  segment) and the interior-segment two-sided spanning split (the cavity spans
-  both sides; the new `(a,m)`/`(m,b)` edges are interior fan edges shared by
-  triangles on opposite sides, with differing region attributes).
-
-### 3.2 Bad-triangle priority queue + dirty re-testing — slice 5c-2, **shipped**
-
-Done. The per-iteration `badTriangle` rescan is replaced by a
-`PriorityQueue<BadTri>` in `JavaTriangleMesher` keyed by shortest-edge length
-(squared, to avoid a `sqrt`), shortest = highest priority. Seeded once over the
-whole mesh (applying the MPW skip); after each insertion/split only the new fan
-(`IncrementalCdt.lastFanTriangles()`) is re-tested and the newly-bad enqueued.
-Entries carry the slot id + corners at enqueue time, and `dequeueValidBad`
-discards stale ones (slot freed, or reused for a different triangle — a surviving
-triangle's corners are unchanged, so it is still bad and needs no re-test). When
-a bad triangle's off-centre is rejected for encroachment, the triangle is
-requeued (it was not refined). This kept the rescan-style "clear encroached
-subsegments first" structure on top (still `encroachedSubsegment` each iteration
-— that is 5c-3). The mesh order changes (worst-first), landing on a smaller mesh.
-
-Original notes (Triangle's scheme, triangle.c:3711 `enqueuebadtriang`): a
-priority queue keyed by shortest-edge length — Triangle uses 4096 length-bucketed
-FIFO queues, shortest edge = highest priority. **By edge *length*, not angle** —
-an earlier worst-first-by-angle experiment regressed area cases; do not repeat
-that. Seed once (`tallyfaces`); after each insertion/split re-test only the
-triangles that changed (Triangle's `triflaws` path); re-validate on dequeue
-(triangle may have been destroyed — triangle.c:8313).
-
-### 3.3 Maintained encroachment index — slice 5c-3, **shipped**
-
-Done, but **not** as a literal queue — the goal was "remove the per-iteration
-encroachment edge→apex rebuild," and a maintained index reaches it more simply
-and without changing behaviour. `IncrementalCdt` keeps a `segTri` map (segment
-edge → one live incident triangle id), maintained as the fan replaces incident
-triangles (and for the two halves on a split). `apexesOfSegment(a,b)` then reads
-the ≤2 opposite apexes in O(1) — the indexed triangle plus one adjacency hop —
-so `encroachedSubsegment` is an O(S) scan with no `HashMap` of 3T edges rebuilt
-each iteration. Because it returns the same apexes the old rebuild did, the
-refinement order is unchanged: the q=33 case and every `bench heavy` case keep
-byte-identical triangle counts vs 5c-2.
-
-A literal priority queue (triangle.c:8081, `splitencsegs`) fed only the dirty set
-would make this O(dirty) rather than O(S) per iteration, but it needs stale-entry
-revalidation and an edge→segment-index map; the maintained index removes the same
-O(T) rebuild for far less machinery and zero behaviour change. Left as a possible
-future refinement if S ever dominates (it does not on these inputs: S ≈ 352).
-
-### 3.4 The refinement loop becomes
+The driver throughout is the captured q=33 fine-hole case
+(`src/bench/resources/inputs/regression/rectangle-solid-with-hole.json`: a 2×1
+rectangle with a 256-facet polygonal hole, region max area ≈ 0.00308,
+`minAngleDegrees = 33`). It is the input that first *diverged* (slice 5 fixed
+termination) and then merely *crawled*. Run it with:
 
 ```
-build CDT once -> IncrementalCdt (maintained adjacency)
-tally encroached subsegments; split them all (concentric shells)   // 5a
-tally bad triangles into the length queue (MPW skip)               // 5b
-while queue not empty and under the vertex cap:
-    t = dequeue worst bad triangle; skip if stale
-    p = offCentre(t)
-    if p encroaches a subsegment: enqueue that subsegment; split it
-    else: insert p; re-test only the new triangles -> enqueue newly bad
+gradlew bench --args="src/bench/resources/inputs/regression"
 ```
 
-Same logic as the committed loop, driven by queues over a maintained mesh instead
-of full rescans.
+(`loadDirectory` is non-recursive — point at the directory holding the `.json`.)
 
-## 4. Sub-slices and status
+Wall-clock, all committed, 384 tests green throughout:
 
-1. **5c-1 — maintained adjacency.** **DONE** (this round; 8.2 → ~2.3 s on the
-   q=33 case, 384 tests green). Stable IDs + incremental neighbour links with the
-   existing rescan-based loop kept on top; removed the per-insertion adjacency
-   rebuild (insertion is now O(cavity)). The fiddly segment-split cases in §3.1
-   are handled; the oracle (and `adjacencyConsistent()`) caught topology errors
-   during development.
-2. **5c-2 — bad-triangle length queue + dirty re-testing.** **DONE** (this round;
-   ~2.3 → ~0.5 s on the q=33 case, 2,644 tris, 384 tests green). Removed the
-   per-iteration `badTriangle` rescan; stable IDs (5c-1) make the queue entries
-   safe to carry (revalidated on dequeue).
-3. **5c-3 — maintained encroachment index.** **DONE** (this round; ~0.5 → ~0.17 s
-   on the q=33 case, still 2,644 tris, 384 tests green). Removed the last
-   per-iteration O(T) rescan (the encroachment edge→apex rebuild) via a maintained
-   `segTri` index + O(1) `apexesOfSegment`; behaviour-preserving (§3.3).
+| step | time | tris | commit |
+|---|---|---|---|
+| start (after slice 5 correctness) | 74 s | — | — |
+| encroachment scan O(S·T)→O(S+T), edge→apex index | 58 s | — | `306942a` |
+| drop trig: squared-cosine bad-triangle test (no `acos`) | **13 s** | — | `eda8702` |
+| read mesh in place (no per-iteration snapshot) | 9.7 s | 8,281 | `26ed658` |
+| maintained adjacency, O(cavity) insertion (5c-1) | ~2.3 s | 5,801 | `3a62997` |
+| bad-triangle length queue + dirty re-testing (5c-2) | ~0.5 s | 2,644 | `78b55b0` |
+| maintained encroachment index, no edge→apex rebuild (5c-3) | **~0.17 s** | 2,644 | `5061976` |
 
-All three shipped. The q=33 case is ~0.17 s (~1.6× native's 105 ms). Stopping
-here on **speed** — closing the rest of the gap is the **size** fix (free-vertex
-deletion), a separate effort that also cuts the loop constant.
+Native Triangle does the same input in **2,745 triangles / ~105 ms**. We finish
+in ~0.17 s / 2,644 triangles — ~1.6× native's time, and *below* its triangle
+count. (Times re-measured on one machine; the 9.7 s row clocked 8.2 s there. The
+constant-factor rows pre-date the triangle-count instrumentation.)
 
-## 5. Validation
+The remaining gap to native is no longer *speed*; it is *size* on other inputs
+(§5).
 
-Same oracle as everything else.
+## 2. The path, step by step
 
-- **Correctness:** full suite (384) stays green, especially `DifferentialTest`
-  and the `refinesAFacetedHoleAtAHighAngleBound` (q=33) regression. The
-  neighbour-slot and topology invariants in `MeshValidator` directly check the
-  adjacency 5c-1 maintains by hand — a precise oracle.
-- **Speed target:** the q=33 captured case (now ~2.3 s after 5c-1; native 105 ms)
-  via `gradlew bench --args="src/bench/resources/inputs/regression"`, or the
-  timing harness pattern used this round (mesh it, print tris/ms/violations).
-- Watch the synthetic area cases (`bench heavy`) for no regression.
+### 2.1 Constant-factor wins (74 → 9.7 s)
 
-## 6. Risks
+Three cheap changes, in order — see [§4](#4-lessons-learned) for why the order
+mattered:
 
-- **Maintained adjacency is real mesh surgery** (relinking on cavity insertion and
-  segment split — see §3.1's fiddly cases). The genuinely hard part — now done
-  (5c-1). Mitigation in place: validate after every sub-slice, plus the debug
-  `adjacencyConsistent()` cross-check of maintained links against a fresh rebuild,
-  asserted in `IncrementalCdtTest`.
-- **Stale queue entries** — re-validate on dequeue (triangle.c:8313).
-- **Don't reorder by angle** — use shortest-edge length for the queue.
+1. **Encroachment scan O(S·T) → O(S+T).** `encroachedSubsegment` indexed every
+   triangle edge to its (≤2) opposite apexes once, so the segment scan stopped
+   being "for each of S segments, scan all T triangles." 74 → 58 s.
+2. **Squared-cosine bad-triangle test.** `belowAngleBound` (mirrors
+   triangle.c:4036) replaced `minAngleDeg`'s three `Math.acos` per triangle with
+   the squared cosine of the angle opposite the shortest edge vs `cos²(bound)`.
+   **58 → 13 s — the single biggest win.** `acos` was the dominant cost (~190M
+   calls).
+3. **Read the mesh in place.** `IncrementalCdt` exposes live views; the output is
+   built once at convergence instead of snapshotting the whole mesh every
+   iteration. 13 → 9.7 s.
 
-## 7. Effort
+After these the per-iteration work was genuinely *structural* — each insertion
+rebuilt adjacency, and each iteration rescanned the mesh for bad triangles and
+rebuilt the encroachment index. No constant-factor trick could move it.
 
-5c-1 is the bulk and the risk; 5c-2/5c-3 are mechanical once stable IDs exist.
-Diagnose-first per sub-slice, measure the q=33 case after each, stop when fast
-enough.
+### 2.2 The structural change: maintained adjacency + work queues (9.7 → 0.17 s)
+
+This mirrors Triangle's `enforcequality` (triangle.c:8416), which is fast
+precisely because it never rescans the whole mesh and never rebuilds adjacency.
+It went in as three sub-slices, each measured, each keeping 384 tests green:
+
+- **5c-1 — maintained adjacency.** Stable triangle ids carrying their own
+  neighbour links; insertion walks the cavity through them (O(cavity)) and
+  relinks the new fan locally, instead of rebuilding global adjacency from a
+  `HashMap` every time. **9.7 → ~2.3 s.** (Implementation record: [§3.1](#31-maintained-adjacency-stable-ids--the-fan-linking-rule).)
+- **5c-2 — bad-triangle length queue.** A priority queue keyed by shortest-edge
+  length replaces the per-iteration rescan for the next bad triangle; only the
+  triangles a mutation changed are re-tested. **~2.3 → ~0.5 s**, and the
+  worst-first order also halved the mesh (5,801 → 2,644 tris). ([§3.2](#32-bad-triangle-length-queue--staleness-on-reused-slots).)
+- **5c-3 — maintained encroachment index.** A per-segment incident-triangle index
+  makes a subsegment's apexes an O(1) lookup, so `encroachedSubsegment` is an
+  O(S) scan with no per-iteration edge→apex rebuild. **~0.5 → ~0.17 s**, and
+  behaviour-preserving (same mesh). ([§3.3](#33-encroachment-via-a-maintained-apex-index).)
+
+## 3. Implementation record (the parts worth not re-deriving)
+
+### 3.1 Maintained adjacency, stable ids — the fan-linking rule
+
+`IncrementalCdt` stores triangles in slots with a stable integer id. Each slot
+holds 3 corners, 3 neighbour ids (or −1), its region attribute, and a liveness
+flag (a `null` corner array). Deleted triangles are nulled and their slots queued
+for reuse; the live views therefore carry holes, and every scanning consumer
+skips `null`. The mesh is compacted only when `toOutput` builds the final result,
+which emits the *maintained* adjacency — so `MeshValidator`'s neighbour-slot
+invariants directly check the hand-relinked links (a precise oracle). A debug
+`adjacencyConsistent()` additionally cross-checks them against a from-scratch
+rebuild and is asserted in `IncrementalCdtTest`.
+
+`insertViaCavity` gathers the cavity by walking neighbour links from the seed
+(O(cavity)), with **generation-stamped** membership (a slot is in the current
+cavity iff its stamp equals the current generation) so there is no full-size
+visited-array clear. Then it re-fans, relinking locally:
+
+- Build each new triangle as `{u, w, p}` with the inserted vertex `p` **always at
+  corner 2**. The boundary edge `(u,w)` is then always opposite corner 2 (slot 2 →
+  the outer-ring neighbour); the two interior fan edges are `(p,u)` (opp corner 1,
+  slot 1) and `(w,p)` (opp corner 0, slot 0).
+- **Pair adjacent fan triangles by shared boundary vertex:** each boundary vertex
+  `v` (≠ p) appears in exactly two new triangles — once as a `u` (its slot-1 edge)
+  and once as a `w` (its slot-0 edge) — link those two. The outer-ring neighbour's
+  link back into the cavity is repointed to the new triangle.
+- `ccw()` is gone on purpose: `p` **must** stay at corner 2 for the slot
+  bookkeeping, and the star-shaped cavity guarantees `{u,w,p}` is already CCW.
+
+**Fiddly cases that the design turns on:**
+
+- *Segment-split skip-edge.* The split edge `(a,b)` is not re-fanned (it would
+  form a degenerate `{a,b,p}`). Its endpoints then appear in only one fan triangle
+  each, leaving their new `(a,m)`/`(m,b)` edges correctly neighboured across the
+  segment.
+- *Two-sided spanning split.* For an interior region-boundary segment the cavity
+  spans both sides; the new `(a,m)`/`(m,b)` edges are interior fan edges shared by
+  triangles on opposite sides, with differing region attributes — handled because
+  each new triangle inherits its source cavity triangle's attribute.
+
+### 3.2 Bad-triangle length queue — staleness on reused slots
+
+A `PriorityQueue<BadTri>` keyed by **shortest-edge length** (squared, to avoid a
+`sqrt`); shortest = highest priority. **By edge *length*, not angle** — an earlier
+worst-angle-first experiment regressed area cases ~2.6× (see
+[refinement-small-features.md](refinement-small-features.md) §1). It is seeded
+once over the whole mesh (applying the Miller–Pav–Walkington skip from slice 5b);
+after each insertion or split only the new fan
+(`IncrementalCdt.lastFanTriangles()`) is re-tested and the newly-bad enqueued —
+Triangle's `triflaws` path.
+
+The subtlety is **staleness with slot reuse:** a queued slot may have been freed,
+or reused for a *different* triangle. Each entry carries the slot id **and the
+corners at enqueue time**; `dequeueValidBad` discards an entry whose slot is dead
+or no longer holds those corners. A surviving triangle's corners are unchanged, so
+it is necessarily still bad — no re-test needed on dequeue. One more case:  when a
+bad triangle's off-centre is *rejected* (it would encroach a subsegment), the
+triangle was not refined, so it is requeued (a no-op if the segment split happened
+to destroy it).
+
+### 3.3 Encroachment via a maintained apex index
+
+The last per-iteration O(T) cost was that `encroachedSubsegment` rebuilt a
+`HashMap` of all 3T triangle edges → apexes every iteration, just to read the
+apexes of the S segments. Replaced with a maintained `segTri` map (segment edge →
+one live incident triangle id), updated as the fan replaces incident triangles
+(and, on a split, for the two new halves). `apexesOfSegment(a,b)` then returns the
+≤2 opposite apexes in O(1): the indexed triangle gives one, a single adjacency hop
+across `(a,b)` gives the other. `encroachedSubsegment` becomes an O(S) scan.
+
+This was deliberately **not** a literal encroached-subsegment queue (triangle.c:8081,
+`splitencsegs`). A queue fed only the dirty set would be O(dirty) rather than O(S)
+per iteration, but it needs stale-entry revalidation and an edge→segment-index
+map; the maintained index removes the same O(T) rebuild for far less machinery and
+**zero behaviour change** — because it returns the same apexes the rebuild did, the
+refinement order is identical, so the q=33 case and every `bench heavy` case keep
+byte-identical triangle counts vs 5c-2. That invariance is itself a correctness
+check. A real queue is a future option if S ever dominates (it does not here: S ≈
+352).
+
+## 4. Lessons learned
+
+- **Measure, don't guess — and beware masking.** The `acos` removal (§2.1 step 2)
+  was the biggest win and was *not* the change that "looked" wasteful. Reading the
+  mesh in place (step 3) was tried *before* the trig removal and showed **zero**
+  gain, because `acos` was masking it; only once the trig was gone did removing the
+  snapshot become a real win. The obvious-looking waste (the snapshot) was not the
+  bottleneck until the real one (trig) was removed first.
+- **Order of bad-triangle processing changes the mesh — pick the right key.**
+  Refinement output is order-dependent. Worst-first **by shortest edge length**
+  (Triangle's actual scheme) both sped things up *and* shrank the mesh (5,801 →
+  2,644). Worst-first **by angle** regressed area-constrained cases ~2.6× and was
+  reverted — do not repeat it.
+- **A behaviour-preserving optimization is the safest kind, and you can prove it.**
+  5c-3 changes *how* encroachment is looked up, not the refinement order, so it
+  must produce byte-identical meshes. Checking that the triangle counts were
+  unchanged across six different inputs was a fast, decisive correctness signal —
+  stronger and quicker than re-reasoning the geometry.
+- **Make the existing oracle check the new invariant.** Having `toOutput` emit the
+  *maintained* adjacency (rather than a safe from-scratch rebuild) means
+  `MeshValidator`'s neighbour-slot checks exercise the hand-relinking on every
+  test. The mesh surgery was the genuinely risky part; routing it through the
+  oracle (plus the debug `adjacencyConsistent()` cross-check) caught topology
+  errors immediately.
+- **Stable ids unlocked the queues.** The bad-triangle and (potential)
+  encroachment work queues are only safe to carry references in once a triangle
+  has an identity that survives mutation — hence 5c-1 first, then 5c-2/5c-3. With
+  reused slots, "is this entry still valid?" needs an enqueue-time corner snapshot
+  to detect reuse.
+- **Slice it, and keep every step green.** Each sub-slice was a separate commit
+  measured on the q=33 case with the full suite green; the constant-factor wins
+  likewise. That made each behaviour/perf change attributable and reversible.
+
+## 5. Ideas for further improvement
+
+Speed is done for this case; these are the next levers, roughly in order of
+expected payoff.
+
+- **Free-vertex deletion (size — the remaining gap).** Native produces *fewer*
+  points partly because, when splitting a non-shared encroached segment, it first
+  deletes any free (Steiner) vertices inside the segment's diametral circle
+  (Chew; triangle.c:8122). We never delete vertices, so the synthetic `bench heavy`
+  area cases still sit a touch above native's count. This needs a vertex-removal
+  op on `IncrementalCdt` (a constrained cavity re-triangulation that removes a free
+  vertex and re-fills its star) — the most invasive new mesh operation, and the
+  main reason native is still smaller. Cutting N also cuts the loop constant, so it
+  is both a quality and a speed lever. Sketched as slice 5d in
+  [refinement-small-features.md](refinement-small-features.md) §2.3/§3.
+- **Remaining O(T) operations, now that the per-iteration ones are gone.**
+  `locate` (point-in-domain for an interior insertion) and `incidentTriangles`
+  (segment-split seeds) are still linear scans, and `splitSegment` uses the latter.
+  They are not in the per-iteration hot path the way the old rescans were, but on
+  much larger inputs they would resurface. `locate` could be seeded from the bad
+  triangle whose off-centre is being inserted (it is adjacent); `incidentTriangles`
+  could use the new `segTri` index (segment edge → one incident triangle, plus an
+  adjacency hop for the other) and drop the scan entirely.
+- **A real encroached-subsegment queue.** If an input has S large enough that the
+  O(S)-per-iteration scan dominates, replace it with the dirty-set-fed queue
+  described in §3.3. Low priority until a benchmark shows S mattering.
+- **Off-centre placement / grading.** The slice-4 off-centre is adequate; Triangle's
+  is the same family. If a future input grades poorly, revisit the target-angle
+  margin and the circumcentre clamp — but only with a measured case in hand (per
+  the first lesson).
+- **Allocation churn.** Insertion allocates several small `int[]` per fan triangle
+  and short-lived maps per insertion; `apexesOfSegment` returns a fresh `int[2]`
+  per segment per iteration. Negligible on these inputs, but the obvious target if
+  GC ever shows up in a profile.
+
+## 6. How it is validated and measured
+
+- **Correctness:** the full suite (384) stays green, especially `DifferentialTest`
+  (java-vs-native fuzz, both must honour the contract) and the
+  `refinesAFacetedHoleAtAHighAngleBound` (q=33) regression. `MeshValidator`'s
+  neighbour-slot and topology invariants check the maintained adjacency by hand;
+  `adjacencyConsistent()` cross-checks it against a rebuild on the scenario inputs.
+- **Speed/size:** `gradlew bench --args="src/bench/resources/inputs/regression"`
+  for the q=33 captured case (tris / java_ms / native_ms / ratio), and
+  `gradlew bench --args="heavy"` for the synthetic area + quality cases. Watch the
+  heavy area cases for no size regression after any ordering change.

@@ -113,9 +113,10 @@ Bad triangles are processed worst-first via 4096 length-bucketed FIFO queues
 keyed by **squared shortest-edge length**; shortest edges have highest priority.
 This both improves termination/grading and removes per-iteration global rescans.
 
-We currently take a `toOutput()` snapshot and scan all triangles every iteration
-([JavaTriangleMesher.java refine loop](../src/main/java/com/acme/triangle/impl/JavaTriangleMesher.java)) —
-correct but O(N) per step; a maintained queue is also a performance win.
+**Done (slice 5c-2).** The refine loop now drives a shortest-edge-length priority
+queue and re-tests only the triangles each mutation changed, replacing the
+per-iteration rescan; this was also the largest single speed win after maintained
+adjacency. See [refinement-performance.md](refinement-performance.md) §3.2.
 
 ### Off-centre note
 
@@ -152,13 +153,16 @@ is the right foundation. New capabilities it (or the refiner) will need:
    cascade subsides.
 2. **5b — MPW skip rule** (§2.2) in `badTriangle`. Expected to be the piece that
    actually terminates. After 5a+5b, the q=33 captured case should converge.
-3. **5c — maintained priority queue + dirty-set re-testing** (§2.4). Performance
-   and grading; also removes the O(N) per-iteration snapshot.
-4. **5d — free-vertex deletion** (§2.3), only if needed to match native's point
-   count or quality. Requires the new deletion op.
+3. **5c — maintained adjacency + work queues** (§2.4). **Done** — performance, not
+   correctness: maintained triangle adjacency, a shortest-edge-length bad-triangle
+   queue, and a maintained encroachment index took q=33 from ~9.7 s to ~0.17 s.
+   Full record in [refinement-performance.md](refinement-performance.md).
+4. **5d — free-vertex deletion** (§2.3). **Open follow-up** — the remaining gap to
+   native is *size* (we make a few percent more triangles on synthetic area cases).
+   This is the lever that closes it, and the one genuinely hard new mesh op.
 
-Stop after the earliest sub-slice that makes q=33 converge with a contract-valid
-mesh; later ones are refinement/performance, not correctness.
+5a/5b made q=33 converge with a contract-valid mesh (the correctness goal); 5c
+made it fast; 5d (size) is optional and not yet started.
 
 ## 5. Validation
 

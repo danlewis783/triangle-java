@@ -192,15 +192,19 @@ build the corresponding shared library and place it under the matching prefix
 
 ## Limitations & possible follow-ups
 
-- **Performance.** Filtered predicates (fast `double` estimate with an exact
-  `BigDecimal` fallback) and incremental refinement (local Bowyer–Watson
-  insertion instead of a full rebuild per Steiner point) are in place. What
-  remains: each insertion still rebuilds triangle adjacency, so high–angle-bound
-  meshes on finely-faceted boundaries are O(N²). The maintained-adjacency +
-  work-queue plan that closes this is scoped in
+- **Performance.** The refinement hot path is done: filtered predicates (fast
+  `double` estimate with an exact `BigDecimal` fallback), incremental refinement
+  (local Bowyer–Watson insertion), maintained triangle adjacency (O(cavity)
+  insertion), a worst-first bad-triangle queue, and a maintained encroachment
+  index together took the hard q=33 fine-hole case from 74 s to ~0.17 s — ~1.6×
+  native, and below native's triangle count. The full path, steps, lessons, and
+  next ideas are in
   [docs/refinement-performance.md](docs/refinement-performance.md); the
-  small-feature termination work behind it is in
-  [docs/refinement-small-features.md](docs/refinement-small-features.md).
+  small-feature *termination* work behind it (concentric shells + the
+  Miller–Pav–Walkington skip) is in
+  [docs/refinement-small-features.md](docs/refinement-small-features.md). The one
+  remaining gap is **size** — on synthetic area cases we still make a few percent
+  more triangles than native, which free-vertex deletion (Chew) would close.
 - **A global (non-regional) area bound** is not part of the API (per-region max
   area *is* honoured).
 - **Native platforms** other than Windows x64 need their shared library built
