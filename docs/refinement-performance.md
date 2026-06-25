@@ -1,8 +1,8 @@
 # Slice 5c: making fine-feature refinement fast
 
-Status: **maintained adjacency (5c-1) and the bad-triangle length queue (5c-2)
-shipped; the encroached-subsegment queue (5c-3) is the focused next effort.**
-Companion to
+Status: **slice 5c complete — maintained adjacency (5c-1), the bad-triangle
+length queue (5c-2), and the maintained encroachment index (5c-3) are all
+shipped. The q=33 case is now ~0.17 s (was 74 s), ~1.6× native.** Companion to
 [refinement-small-features.md](refinement-small-features.md) (slices 5a/5b —
 *terminating* refinement on fine-featured boundaries, shipped). This doc covers
 making that case *fast*.
@@ -23,26 +23,25 @@ green throughout:
 | drop trig: squared-cosine bad-triangle test (no `acos`) | **13 s** | `eda8702` |
 | read mesh in place (no per-iteration snapshot) | **9.7 s** | `26ed658` |
 | maintained adjacency: O(cavity) insertion, no per-insertion rebuild (5c-1) | **~2.3 s** | `3a62997` |
-| bad-triangle length queue + dirty re-testing (5c-2) | **~0.5 s** | this round |
+| bad-triangle length queue + dirty re-testing (5c-2) | **~0.5 s** | `78b55b0` |
+| maintained encroachment index, no per-iteration edge→apex rebuild (5c-3) | **~0.17 s** | this round |
 
 (Timings re-measured on this machine: the 9.7 s baseline clocked 8.2 s / 8,281
 triangles here; 5c-1 took it to ~2.3 s / 5,801 triangles; 5c-2 to ~0.5 s / 2,644
-triangles. The triangle count keeps *changing* because the refinement order
-changes — 5c-1's slot reuse, then 5c-2's worst-first-by-shortest-edge queue
-(Triangle's actual scheme) — each a different but `MeshValidator`-valid sequence.
-5c-2's order is markedly better: 2,644 triangles is now *below* native's 2,745,
-and the `bench heavy` area cases stayed within normal variation, no regression.)
+triangles; 5c-3 to ~0.17 s, **still 2,644 triangles**. The count *changed* through
+5c-1 (slot reuse) and 5c-2 (worst-first-by-shortest-edge — Triangle's actual
+scheme, markedly better: below native's 2,745) because each alters the refinement
+*order*; 5c-3 only changes *how* encroachment is looked up, not the order, so it
+is behaviour-preserving — the q=33 case and all `bench heavy` cases keep
+byte-identical triangle counts, a built-in correctness check. ~0.17 s is ~1.6×
+native's 105 ms.)
 
-**Cheap constant-factor wins are exhausted, the per-insertion adjacency rebuild
-is gone (5c-1), and the per-iteration bad-triangle rescan is gone (5c-2).** Two
-gaps remain:
-
-- **Speed** — this doc. One per-iteration O(T) rescan remains: the encroachment
-  edge→apex index is still rebuilt each iteration (`encroachedSubsegment`).
-  Removing it is 5c-3 (§3.3).
-- **Size** — we now make ~native's triangle count on the q=33 case; the synthetic
-  area cases are still a touch above native. Free-vertex deletion is a separate
-  effort, but cutting N also cuts the loop constant.
+**Slice 5c is done:** the per-insertion adjacency rebuild (5c-1), the
+per-iteration bad-triangle rescan (5c-2), and the per-iteration encroachment
+edge→apex rebuild (5c-3) are all gone. The loop is now O(cavity) per insertion
+with O(S) per-iteration segment work. The only remaining gap is **size** — the
+synthetic area cases are still a touch above native; free-vertex deletion is a
+separate effort.
 
 ## 2. What was already done, and the lesson
 
@@ -139,12 +138,24 @@ that. Seed once (`tallyfaces`); after each insertion/split re-test only the
 triangles that changed (Triangle's `triflaws` path); re-validate on dequeue
 (triangle may have been destroyed — triangle.c:8313).
 
-### 3.3 Encroached-subsegment queue — slice 5c-3
+### 3.3 Maintained encroachment index — slice 5c-3, **shipped**
 
-Keep an encroached-subsegment queue (triangle.c:8081, `splitencsegs`) seeded once
-and fed by the dirty set, removing the per-iteration encroachment edge→apex
-rebuild. (The per-iteration *snapshot* this slice would also have removed is
-already gone — done in step 3 above.)
+Done, but **not** as a literal queue — the goal was "remove the per-iteration
+encroachment edge→apex rebuild," and a maintained index reaches it more simply
+and without changing behaviour. `IncrementalCdt` keeps a `segTri` map (segment
+edge → one live incident triangle id), maintained as the fan replaces incident
+triangles (and for the two halves on a split). `apexesOfSegment(a,b)` then reads
+the ≤2 opposite apexes in O(1) — the indexed triangle plus one adjacency hop —
+so `encroachedSubsegment` is an O(S) scan with no `HashMap` of 3T edges rebuilt
+each iteration. Because it returns the same apexes the old rebuild did, the
+refinement order is unchanged: the q=33 case and every `bench heavy` case keep
+byte-identical triangle counts vs 5c-2.
+
+A literal priority queue (triangle.c:8081, `splitencsegs`) fed only the dirty set
+would make this O(dirty) rather than O(S) per iteration, but it needs stale-entry
+revalidation and an edge→segment-index map; the maintained index removes the same
+O(T) rebuild for far less machinery and zero behaviour change. Left as a possible
+future refinement if S ever dominates (it does not on these inputs: S ≈ 352).
 
 ### 3.4 The refinement loop becomes
 
@@ -174,13 +185,14 @@ of full rescans.
    ~2.3 → ~0.5 s on the q=33 case, 2,644 tris, 384 tests green). Removed the
    per-iteration `badTriangle` rescan; stable IDs (5c-1) make the queue entries
    safe to carry (revalidated on dequeue).
-3. **5c-3 — encroached-subsegment queue.** NOT started (the snapshot half is
-   already done). Removes the last per-iteration O(T) rescan: the encroachment
-   edge→apex rebuild in `encroachedSubsegment`.
+3. **5c-3 — maintained encroachment index.** **DONE** (this round; ~0.5 → ~0.17 s
+   on the q=33 case, still 2,644 tris, 384 tests green). Removed the last
+   per-iteration O(T) rescan (the encroachment edge→apex rebuild) via a maintained
+   `segTri` index + O(1) `apexesOfSegment`; behaviour-preserving (§3.3).
 
-Do in order; measure the q=33 case after each; keep 384 tests green. Stop when
-fast enough — native parity (105 ms) also needs the *size* fix (free-vertex
-deletion), a separate effort.
+All three shipped. The q=33 case is ~0.17 s (~1.6× native's 105 ms). Stopping
+here on **speed** — closing the rest of the gap is the **size** fix (free-vertex
+deletion), a separate effort that also cuts the loop constant.
 
 ## 5. Validation
 

@@ -55,6 +55,10 @@ final class IncrementalCdt {
     private final List<Double> attrs;                         /* per-tri attr, or null */
     private final List<int[]> segments = new ArrayList<>();   /* {a,b,marker,origOrg,origDest} */
     private final Set<Long> segSet = new HashSet<>();
+    /* For each segment edge, one live incident triangle id - so the apexes that
+       decide encroachment are an O(1) adjacency hop, not an O(T) edge->apex
+       rebuild. Maintained as the fan replaces incident triangles. */
+    private final Map<Long, Integer> segTri = new HashMap<>();
 
     /* Dead slots awaiting reuse, and the count of live triangles. */
     private final Deque<Integer> freeSlots = new ArrayDeque<>();
@@ -97,6 +101,15 @@ final class IncrementalCdt {
                 int marker = base.segmentMarkerList != null ? base.segmentMarkerList[i] : 0;
                 segments.add(new int[]{a, b, marker, a, b});   /* original endpoints = a, b */
                 segSet.add(key(a, b));
+            }
+        }
+        for (int i = 0; i < tris.size(); i++) {            /* seed segment->triangle */
+            int[] t = tris.get(i);
+            for (int j = 0; j < 3; j++) {
+                long k = key(t[j], t[(j + 1) % 3]);
+                if (segSet.contains(k)) {
+                    segTri.put(k, i);
+                }
             }
         }
     }
@@ -197,13 +210,33 @@ final class IncrementalCdt {
         vseg.add(new int[]{origOrg, origDest});
 
         segSet.remove(key(a, b));            /* let the cavity span the old segment */
+        segTri.remove(key(a, b));
         insertViaCavity(mIdx, seeds, key(a, b));
 
         segments.set(segIndex, new int[]{a, mIdx, marker, origOrg, origDest});
         segments.add(new int[]{mIdx, b, marker, origOrg, origDest});
         segSet.add(key(a, mIdx));
         segSet.add(key(mIdx, b));
+        /* The halves are new segments incident to mIdx; back each with one of the
+           fan triangles just created (the re-fan only indexes pre-existing outer
+           edges, so these are registered here). */
+        indexSegmentTriangle(a, mIdx);
+        indexSegmentTriangle(mIdx, b);
         return mIdx;
+    }
+
+    /** Point {@link #segTri} for edge (a,b) at any live triangle in the last fan
+        that carries it. */
+    private void indexSegmentTriangle(int a, int b) {
+        for (int id : lastFan) {
+            int[] t = tris.get(id);
+            boolean ha = t[0] == a || t[1] == a || t[2] == a;
+            boolean hb = t[0] == b || t[1] == b || t[2] == b;
+            if (ha && hb) {
+                segTri.put(key(a, b), id);
+                return;
+            }
+        }
     }
 
     /**
@@ -325,6 +358,10 @@ final class IncrementalCdt {
             int id = allocSlot(new int[]{u, w, pIdx}, new int[]{-1, -1, nb},
                     fanAttr != null ? fanAttr.get(i) : null);
             lastFan.add(id);
+            long uw = key(u, w);
+            if (segSet.contains(uw)) {                      /* this fan tri now backs the segment */
+                segTri.put(uw, id);
+            }
             if (nb >= 0) {                                  /* repoint the outer ring */
                 int[] nc = tris.get(nb);
                 int[] nn = nbrs.get(nb);
@@ -409,6 +446,34 @@ final class IncrementalCdt {
             return new int[0];
         }
         return t2 < 0 ? new int[]{t1} : new int[]{t1, t2};
+    }
+
+    /**
+     * The opposite corners of the (one or two) triangles incident to segment edge
+     * {@code (a,b)} - the apexes whose position decides whether the subsegment is
+     * encroached. Uses the maintained {@link #segTri} index plus one adjacency hop,
+     * so it is O(1) rather than a mesh scan. A boundary segment has one apex; the
+     * second slot is then -1. Returns {-1, -1} if (a,b) is not a known segment.
+     */
+    int[] apexesOfSegment(int a, int b) {
+        Integer t1 = segTri.get(key(a, b));
+        if (t1 == null) {
+            return new int[]{-1, -1};
+        }
+        int[] tc = tris.get(t1);
+        int apex1 = third(tc, a, b);
+        int slot = tc[0] == apex1 ? 0 : tc[1] == apex1 ? 1 : 2;   /* edge (a,b) opp the apex */
+        int nb = nbrs.get(t1)[slot];
+        int apex2 = nb < 0 ? -1 : third(tris.get(nb), a, b);
+        return new int[]{apex1, apex2};
+    }
+
+    /** The corner of {@code tc} that is neither {@code a} nor {@code b}. */
+    private static int third(int[] tc, int a, int b) {
+        if (tc[0] != a && tc[0] != b) {
+            return tc[0];
+        }
+        return tc[1] != a && tc[1] != b ? tc[1] : tc[2];
     }
 
     TriangleMesherOutput toOutput() {

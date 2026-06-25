@@ -115,7 +115,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
             List<int[]> segments = mesh.segmentsView();
 
             /* Ruppert: clear every encroached subsegment before any bad triangle. */
-            int seg = encroachedSubsegment(tris, points, segments);
+            int seg = encroachedSubsegment(mesh, points, segments);
             if (seg >= 0) {
                 mesh.splitSegment(seg);
                 enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
@@ -225,50 +225,21 @@ public final class JavaTriangleMesher implements TriangleMesher {
     }
 
     /** First subsegment with an adjacent triangle apex inside its diametral disk.
-        Indexes each edge to its (at most two) opposite apexes once - O(T) - so
-        the segment scan is O(T + S) rather than O(S * T). */
-    private static int encroachedSubsegment(List<int[]> tris,
+        Reads each segment's opposite apexes from the mesh's maintained index - an
+        O(1) adjacency hop apiece - so the scan is O(S) with no per-iteration
+        edge->apex rebuild. */
+    private static int encroachedSubsegment(IncrementalCdt mesh,
                                             List<double[]> points,
                                             List<int[]> segments) {
-        Map<Long, int[]> edgeApex = new HashMap<>(2 * tris.size() + 1);
-        for (int t = 0; t < tris.size(); t++) {
-            int[] tc = tris.get(t);
-            if (tc == null) {
-                continue;                           /* dead slot (maintained adjacency) */
-            }
-            addApex(edgeApex, tc[1], tc[2], tc[0]);
-            addApex(edgeApex, tc[2], tc[0], tc[1]);
-            addApex(edgeApex, tc[0], tc[1], tc[2]);
-        }
         for (int s = 0; s < segments.size(); s++) {
             int a = segments.get(s)[0], b = segments.get(s)[1];
-            int[] apexes = edgeApex.get(key(a, b));
-            if (apexes == null) {
-                continue;
-            }
-            for (int ap : apexes) {
+            for (int ap : mesh.apexesOfSegment(a, b)) {
                 if (ap >= 0 && inDiametralDisk(points, a, b, points.get(ap))) {
                     return s;
                 }
             }
         }
         return -1;
-    }
-
-    /** Record {@code apex} as opposite the edge (u,w); a manifold edge has &le;2. */
-    private static void addApex(Map<Long, int[]> edgeApex, int u, int w, int apex) {
-        long k = key(u, w);
-        int[] e = edgeApex.get(k);
-        if (e == null) {
-            edgeApex.put(k, new int[]{apex, -1});
-        } else if (e[1] < 0) {
-            e[1] = apex;
-        }
-    }
-
-    private static long key(int a, int b) {
-        int lo = Math.min(a, b), hi = Math.max(a, b);
-        return ((long) lo << 32) | (hi & 0xffffffffL);
     }
 
     private static int subsegmentEncroachedBy(double[] p, List<double[]> points,
