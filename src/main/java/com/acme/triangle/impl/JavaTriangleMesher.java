@@ -5,9 +5,11 @@ import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 
 /**
  * Pure-Java {@link TriangleMesher}: constrained Delaunay
@@ -18,9 +20,10 @@ import java.util.Map;
  * vertex lies in its diametral circle - split it at its midpoint; otherwise,
  * while a triangle is below the angle bound, insert its circumcircle centre,
  * unless that centre would encroach a subsegment, in which case split the
- * subsegment instead. Each change rebuilds the constrained Delaunay mesh (simple
- * and correct at these sizes); a spatial/local-update version can come later,
- * validated by the same contract.
+ * subsegment instead. The mesh is an {@link IncrementalCdt} updated in place;
+ * bad triangles are processed worst-first from a queue keyed by shortest-edge
+ * length (Triangle's scheme), re-testing only the triangles a mutation changed
+ * rather than rescanning the whole mesh.
  *
  * <p>This honours both the angle bound ({@code minAngleDegrees}) and per-region
  * maximum-area constraints (the 4th value of each {@code regionList} entry). A
@@ -87,33 +90,51 @@ public final class JavaTriangleMesher implements TriangleMesher {
         IncrementalCdt mesh = new IncrementalCdt(
                 ConstrainedDelaunayTriangulator.triangulate(input));
 
+        /* Worst-first bad-triangle queue, keyed by shortest-edge length (shortest
+           = highest priority; by length, NOT angle - a worst-angle-first variant
+           regressed area cases). Seed once over the whole mesh, then re-test only
+           the triangles each mutation changed (the mesh's "last fan"). Entries can
+           go stale - their slot freed or reused - so revalidate on dequeue. */
+        PriorityQueue<BadTri> bad =
+                new PriorityQueue<>(Comparator.comparingDouble(e -> e.key));
+        List<int[]> seed = mesh.trianglesView();
+        for (int id = 0; id < seed.size(); id++) {
+            if (seed.get(id) != null) {
+                enqueueIfBad(bad, mesh, id, cosSqBound, maxAreaByAttr);
+            }
+        }
+
         int maxVertices = Math.max(input.numberOfPoints * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
         while (true) {
-            /* Live views: with maintained adjacency these are stable lists
-               mutated in place (dead triangles appear as null, so the scans skip
-               them), never snapshotted. Triangle indices are stable but sparse,
-               and a mutation may free/reuse slots, so an index is only valid until
-               the next split/insert - which is why each is consumed within this
-               iteration. */
+            /* Live views, re-fetched each iteration: with maintained adjacency
+               these are stable lists mutated in place (dead triangles appear as
+               null, so the scans skip them). A mutation may free/reuse slots, so a
+               triangle index is only valid until the next split/insert. */
             List<int[]> tris = mesh.trianglesView();
             List<double[]> points = mesh.pointsView();
             List<int[]> segments = mesh.segmentsView();
-            List<Double> attrs = mesh.attrsView();
 
+            /* Ruppert: clear every encroached subsegment before any bad triangle. */
             int seg = encroachedSubsegment(tris, points, segments);
             if (seg >= 0) {
                 mesh.splitSegment(seg);
+                enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
             } else {
-                int bad = badTriangle(mesh, tris, attrs, points, cosSqBound, maxAreaByAttr);
-                if (bad < 0) {
+                int t = dequeueValidBad(bad, mesh);
+                if (t < 0) {
                     return mesh.toOutput();        /* quality achieved: build output once */
                 }
-                double[] centre = offCentre(tris, points, bad, bound);
+                double[] centre = offCentre(tris, points, t, bound);
                 int encroached = subsegmentEncroachedBy(centre, points, segments);
                 if (encroached >= 0) {
                     mesh.splitSegment(encroached);
+                    enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
+                    /* The off-centre was rejected, not inserted; t is unrefined, so
+                       requeue it (no-op if the split happened to destroy it). */
+                    enqueueIfBad(bad, mesh, t, cosSqBound, maxAreaByAttr);
                 } else {
                     mesh.insertInteriorPoint(centre);
+                    enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
                 }
             }
 
@@ -124,6 +145,83 @@ public final class JavaTriangleMesher implements TriangleMesher {
                                 + bound + " degrees not reached"));
             }
         }
+    }
+
+    /** A queued bad triangle: its slot id, its corners at enqueue time (to detect
+        a stale entry once the slot is freed or reused), and its shortest-edge
+        squared length as the priority key. */
+    private static final class BadTri {
+        final int id, a, b, c;
+        final double key;
+
+        BadTri(int id, int a, int b, int c, double key) {
+            this.id = id;
+            this.a = a;
+            this.b = b;
+            this.c = c;
+            this.key = key;
+        }
+    }
+
+    /** Enqueue the triangle in slot {@code id} if it is currently bad. Reads the
+        live mesh, so a dead slot is silently skipped. */
+    private static void enqueueIfBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
+                                     int id, double cosSqBound,
+                                     Map<Double, Double> maxAreaByAttr) {
+        int[] tc = mesh.trianglesView().get(id);
+        if (tc == null) {
+            return;
+        }
+        List<double[]> points = mesh.pointsView();
+        List<Double> attrs = mesh.attrsView();
+        int ia = tc[0], ib = tc[1], ic = tc[2];
+        double[] a = points.get(ia), b = points.get(ib), c = points.get(ic);
+        boolean isBad = false;
+        if (!maxAreaByAttr.isEmpty() && attrs != null) {
+            Double maxArea = maxAreaByAttr.get(attrs.get(id));
+            isBad = maxArea != null && triangleArea(a, b, c) > maxArea;
+        }
+        if (!isBad) {
+            isBad = belowAngleBound(a, b, c, cosSqBound)
+                    && !unsplittable(mesh, points, ia, ib, ic);
+        }
+        if (!isBad) {
+            return;
+        }
+        double key = Math.min(dist2(a, b), Math.min(dist2(b, c), dist2(c, a)));
+        bad.add(new BadTri(id, ia, ib, ic, key));
+    }
+
+    /** Re-test the triangles the most recent mutation created (the mesh's last
+        fan), enqueuing any that are bad - the dirty set in place of a full rescan. */
+    private static void enqueueFan(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
+                                   double cosSqBound, Map<Double, Double> maxAreaByAttr) {
+        for (int id : mesh.lastFanTriangles()) {
+            enqueueIfBad(bad, mesh, id, cosSqBound, maxAreaByAttr);
+        }
+    }
+
+    /** Pop the highest-priority bad triangle still present in the mesh, discarding
+        stale entries (slot freed, or reused for a different triangle). A surviving
+        triangle's corners are unchanged, so it is still bad - no re-test needed. */
+    private static int dequeueValidBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh) {
+        List<int[]> tris = mesh.trianglesView();
+        while (!bad.isEmpty()) {
+            BadTri e = bad.poll();
+            int[] cur = tris.get(e.id);
+            if (cur != null && sameCorners(cur, e.a, e.b, e.c)) {
+                return e.id;
+            }
+        }
+        return -1;
+    }
+
+    /** Whether {@code tc} has exactly the corner set {a, b, c} (the corners are
+        distinct, so containment in both directions reduces to this). */
+    private static boolean sameCorners(int[] tc, int a, int b, int c) {
+        return (tc[0] == a || tc[1] == a || tc[2] == a)
+                && (tc[0] == b || tc[1] == b || tc[2] == b)
+                && (tc[0] == c || tc[1] == c || tc[2] == c);
     }
 
     /** First subsegment with an adjacent triangle apex inside its diametral disk.
@@ -178,35 +276,6 @@ public final class JavaTriangleMesher implements TriangleMesher {
         for (int s = 0; s < segments.size(); s++) {
             if (inDiametralDisk(points, segments.get(s)[0], segments.get(s)[1], p)) {
                 return s;
-            }
-        }
-        return -1;
-    }
-
-    /** The first triangle that must be refined: larger than its region's max
-        area, or below the angle bound and not an unsplittable small-feature
-        triangle. Area is checked first (it always terminates); the skip rule
-        applies only to the angle bound. */
-    private static int badTriangle(IncrementalCdt cdt, List<int[]> tris,
-                                   List<Double> attrs, List<double[]> points,
-                                   double cosSqBound, Map<Double, Double> maxAreaByAttr) {
-        boolean checkArea = !maxAreaByAttr.isEmpty() && attrs != null;
-        for (int t = 0; t < tris.size(); t++) {
-            int[] tc = tris.get(t);
-            if (tc == null) {
-                continue;                           /* dead slot (maintained adjacency) */
-            }
-            int ia = tc[0], ib = tc[1], ic = tc[2];
-            double[] a = points.get(ia), b = points.get(ib), c = points.get(ic);
-            if (checkArea) {
-                Double maxArea = maxAreaByAttr.get(attrs.get(t));
-                if (maxArea != null && triangleArea(a, b, c) > maxArea) {
-                    return t;                               /* too large for region */
-                }
-            }
-            if (belowAngleBound(a, b, c, cosSqBound)
-                    && !unsplittable(cdt, points, ia, ib, ic)) {
-                return t;                                   /* skinny and fixable */
             }
         }
         return -1;

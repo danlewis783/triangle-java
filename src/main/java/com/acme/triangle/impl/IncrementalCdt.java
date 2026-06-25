@@ -60,6 +60,10 @@ final class IncrementalCdt {
     private final Deque<Integer> freeSlots = new ArrayDeque<>();
     private int liveCount;
 
+    /* The ids created by the most recent insertion/split (the new fan): the
+       "dirty set" the refinement loop re-tests instead of rescanning the mesh. */
+    private final List<Integer> lastFan = new ArrayList<>();
+
     /* Generation-stamped cavity membership, so gathering a cavity is O(cavity)
        (never a full-size clear): a slot is in the current cavity iff its stamp
        equals the current generation. */
@@ -127,6 +131,13 @@ final class IncrementalCdt {
     /** Per-triangle region attributes parallel to {@link #trianglesView()}, or null. */
     List<Double> attrsView() {
         return attrs;
+    }
+
+    /** Stable ids of the triangles created by the most recent insertion or
+        segment split - the dirty set to re-test, so the refinement loop need not
+        rescan the whole mesh. Valid until the next mutation. */
+    List<Integer> lastFanTriangles() {
+        return lastFan;
     }
 
     int pointCount() {
@@ -247,6 +258,7 @@ final class IncrementalCdt {
     private void insertViaCavity(int pIdx, int[] seeds, long skipEdgeKey) {
         double[] p = points.get(pIdx);
         gen++;
+        lastFan.clear();
         List<Integer> cavity = new ArrayList<>();
         Deque<Integer> stack = new ArrayDeque<>();
         for (int s : seeds) {
@@ -312,6 +324,7 @@ final class IncrementalCdt {
             int u = f[0], w = f[1], nb = f[2];
             int id = allocSlot(new int[]{u, w, pIdx}, new int[]{-1, -1, nb},
                     fanAttr != null ? fanAttr.get(i) : null);
+            lastFan.add(id);
             if (nb >= 0) {                                  /* repoint the outer ring */
                 int[] nc = tris.get(nb);
                 int[] nn = nbrs.get(nb);
