@@ -10,6 +10,10 @@ import com.acme.triangle.TriangleMeshers;
 import com.acme.triangle.contract.MeshValidator;
 import com.acme.triangle.contract.ScenarioFixtures;
 import com.acme.triangle.contract.ScenarioFixtures.Scenario;
+import com.acme.triangle.io.TriangleJson;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -111,5 +115,34 @@ class JavaTriangleMesherTest {
         assertThat(MeshValidator.validate(o, in))
                 .as("faceted-hole q=33 violations")
                 .isEmpty();
+    }
+
+    @Test
+    void refinesTheCapturedFineHoleRegressionAtQ33() throws URISyntaxException {
+        /* The real captured consumer input - a 2x1 rectangle around a 256-facet
+           hole at q=33 with a per-region max area - is the case that first
+           diverged, then merely crawled, and drove the whole
+           refinement-performance effort. Guard it on every test run: the
+           pure-Java mesher must converge to a fully contract-valid mesh. (The
+           same document is the bench driver under
+           src/bench/resources/inputs/regression; this is a frozen copy.) */
+        URL fixture = getClass().getResource("/regression/rectangle-solid-with-hole.json");
+        assertThat(fixture)
+                .as("captured q=33 regression fixture on the test classpath")
+                .isNotNull();
+        TriangleMesherInput in = TriangleJson.readInput(Paths.get(fixture.toURI()));
+
+        TriangleMesherOutput o = mesher.mesh(in);
+
+        assertThat(MeshValidator.validate(o, in))
+                .as("captured fine-hole q=33 violations")
+                .isEmpty();
+        /* Size-regression guard, not a contract requirement: native makes 2,745
+           triangles and we make ~2,644. A blow-up back toward the pre-refinement
+           ~8,000 is worth catching; the ceiling is deliberately generous so an
+           ordinary ordering change does not trip it. */
+        assertThat(o.numberOfTriangles)
+                .as("captured fine-hole q=33 triangle count")
+                .isLessThan(4000);
     }
 }

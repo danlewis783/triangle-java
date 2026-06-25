@@ -19,8 +19,12 @@ gradlew bench --args="src/bench/resources/inputs/regression"
 ```
 
 (`loadDirectory` is non-recursive — point at the directory holding the `.json`.)
+The same document is also a frozen test fixture
+(`src/test/resources/regression/`): `JavaTriangleMesherTest`'s
+`refinesTheCapturedFineHoleRegressionAtQ33` meshes it and asserts a fully
+contract-valid result on every `gradlew test` run.
 
-Wall-clock, all committed, 384 tests green throughout:
+Wall-clock, all committed, the full suite green throughout:
 
 | step | time | tris | commit |
 |---|---|---|---|
@@ -233,10 +237,13 @@ expected payoff.
 
 ## 6. How it is validated and measured
 
-- **Correctness:** the full suite (384) stays green, especially `DifferentialTest`
-  (java-vs-native fuzz, both must honour the contract) and the
-  `refinesAFacetedHoleAtAHighAngleBound` (q=33) regression. `MeshValidator`'s
-  neighbour-slot and topology invariants check the maintained adjacency by hand;
+- **Correctness:** the full suite stays green, especially `DifferentialTest`
+  (java-vs-native fuzz, both must honour the contract), the synthetic
+  `refinesAFacetedHoleAtAHighAngleBound` (q=33) test, and
+  `refinesTheCapturedFineHoleRegressionAtQ33`, which meshes the exact captured
+  input above and asserts a contract-valid result (plus a generous triangle-count
+  ceiling as a size-regression guard). `MeshValidator`'s neighbour-slot and
+  topology invariants check the maintained adjacency by hand;
   `adjacencyConsistent()` cross-checks it against a rebuild on the scenario inputs.
 - **Speed/size:** `gradlew bench --args="src/bench/resources/inputs/regression"`
   for the q=33 captured case (tris / java_ms / native_ms / ratio), and
