@@ -1,0 +1,19 @@
+{
+  "formatVersion" : 1,
+  "documentType" : "triangle-mesher-input",
+  "name" : "20260625-143742-164-000040-java",
+  "tags" : [ ],
+  "input" : {
+    "pointList" : [ 0.0, 2.358733E-16, 1.5, 0.0, 1.5, 0.06, 0.1, 0.06, 0.1, 3.0, 0.0, 3.0 ],
+    "segmentList" : [ 3, 4, 0, 1, 0, 5, 1, 2, 2, 3, 4, 5 ],
+    "segmentMarkerList" : [ 1, 1, 1, 1, 2, 2 ],
+    "holeList" : [ ],
+    "regionList" : [ 0.8, 0.03, 1.0, 1.011358024691358E-4 ],
+    "numberOfPoints" : 6,
+    "numberOfSegments" : 6,
+    "numberOfHoles" : 0,
+    "numberOfRegions" : 1,
+    "minAngleDegrees" : 33.0,
+    "quiet" : true
+  }
+}
