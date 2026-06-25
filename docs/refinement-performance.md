@@ -41,8 +41,9 @@ in ~0.17 s / 2,644 triangles — ~1.6× native's time, and *below* its triangle
 count. (Times re-measured on one machine; the 9.7 s row clocked 8.2 s there. The
 constant-factor rows pre-date the triangle-count instrumentation.)
 
-The remaining gap to native is no longer *speed*; it is *size* on other inputs
-(§5).
+There is no longer a meaningful *speed* or *size* gap to close — see §5, which
+records the size measurement and why free-vertex deletion was evaluated and
+declined.
 
 ## 2. The path, step by step
 
@@ -200,21 +201,46 @@ check. A real queue is a future option if S ever dominates (it does not here: S 
   measured on the q=33 case with the full suite green; the constant-factor wins
   likewise. That made each behaviour/perf change attributable and reversible.
 
-## 5. Ideas for further improvement
+## 5. Size: measured, and why free-vertex deletion was declined
 
-Speed is done for this case; these are the next levers, roughly in order of
-expected payoff.
+The obvious "next gap" looked like *size*: native deletes free (Steiner) vertices
+from an encroached segment's diametral circle before splitting it (Chew;
+triangle.c:8122–8160, via `deletevertex` at :5626), and we never delete vertices,
+so the assumption was that we make more triangles. **Measured, that assumption is
+false.** Java vs native triangle counts (native q=33 = 2,745 matches the reference
+exactly, so the comparison is trustworthy):
 
-- **Free-vertex deletion (size — the remaining gap).** Native produces *fewer*
-  points partly because, when splitting a non-shared encroached segment, it first
-  deletes any free (Steiner) vertices inside the segment's diametral circle
-  (Chew; triangle.c:8122). We never delete vertices, so the synthetic `bench heavy`
-  area cases still sit a touch above native's count. This needs a vertex-removal
-  op on `IncrementalCdt` (a constrained cavity re-triangulation that removes a free
-  vertex and re-fills its star) — the most invasive new mesh operation, and the
-  main reason native is still smaller. Cutting N also cuts the loop constant, so it
-  is both a quality and a speed lever. Sketched as slice 5d in
-  [refinement-small-features.md](refinement-small-features.md) §2.3/§3.
+| case | java | native | Δ |
+|---|---|---|---|
+| `cdt_50 / 100 / 200` (no refinement) | = | = | 0 |
+| `quality_10` | 51 | 48 | +3 (+6.3 %) |
+| `quality_20` | 87 | 83 | +4 (+4.8 %) |
+| `area_0.010_q20` | 154 | 150 | +4 (+2.7 %) |
+| `area_0.0075_q20` | 207 | 221 | **−14 (−6.3 %)** |
+| `area_0.005_q20` | 313 | 319 | −6 (−1.9 %) |
+| `hole12_q20_a0.010` | 286 | 288 | −2 |
+| **captured q=33** | **2,644** | 2,745 | **−101 (−3.7 %)** |
+
+We are at parity or *below* native almost everywhere, and below it on the big real
+case. The only consistent overage is a handful of triangles on tiny pure-*angle*
+cases (`quality_10/20`: +3/+4), which comes from off-centre granularity — not
+something free-vertex deletion even addresses, since that targets free vertices
+near *segment splits*. Where deletion would most apply — heavy segment splitting,
+i.e. the 256-facet q=33 case — we are already 101 triangles below native.
+
+**Decision: free-vertex deletion is not worth building.** `deletevertex` is a
+whole new mesh-surgery operation (remove an interior free vertex, re-triangulate
+its star, maintain adjacency/segments) with real correctness risk, to shave ~4
+triangles off small cases that aren't even the cases it targets. That is the
+poor-ROI, high-risk move the "diagnose-first, stop when good enough" rule warns
+against. Re-open only if a concrete input shows a size gap that this specifically
+closes — measure first.
+
+## 5a. Remaining low-priority ideas
+
+None of these is motivated by a current measurement; they are the levers to reach
+for *if a future input demands it*, roughly in order of likely payoff.
+
 - **Remaining O(T) operations, now that the per-iteration ones are gone.**
   `locate` (point-in-domain for an interior insertion) and `incidentTriangles`
   (segment-split seeds) are still linear scans, and `splitSegment` uses the latter.
@@ -248,4 +274,8 @@ expected payoff.
 - **Speed/size:** `gradlew bench --args="src/bench/resources/inputs/regression"`
   for the q=33 captured case (tris / java_ms / native_ms / ratio), and
   `gradlew bench --args="heavy"` for the synthetic area + quality cases. Watch the
-  heavy area cases for no size regression after any ordering change.
+  heavy area cases for no size regression after any ordering change. The bench
+  prints java's triangle count but not native's; the §5 java-vs-native size table
+  was taken by temporarily also printing `nat.mesh(in).numberOfTriangles` in
+  `MesherBenchmark.row` (a throwaway diagnostic — re-add it if you need to recheck
+  size against native).

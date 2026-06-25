@@ -192,19 +192,20 @@ build the corresponding shared library and place it under the matching prefix
 
 ## Limitations & possible follow-ups
 
-- **Performance.** The refinement hot path is done: filtered predicates (fast
-  `double` estimate with an exact `BigDecimal` fallback), incremental refinement
-  (local Bowyer–Watson insertion), maintained triangle adjacency (O(cavity)
-  insertion), a worst-first bad-triangle queue, and a maintained encroachment
-  index together took the hard q=33 fine-hole case from 74 s to ~0.17 s — ~1.6×
-  native, and below native's triangle count. The full path, steps, lessons, and
-  next ideas are in
+- **Performance.** Done, with no meaningful gap left to native. Filtered
+  predicates (fast `double` estimate with an exact `BigDecimal` fallback),
+  incremental refinement (local Bowyer–Watson insertion), maintained triangle
+  adjacency (O(cavity) insertion), a worst-first bad-triangle queue, and a
+  maintained encroachment index together took the hard q=33 fine-hole case from
+  74 s to ~0.17 s — ~1.6× native, and *below* native's triangle count. On size we
+  measured java-vs-native counts across the suite and sit at parity or below
+  native almost everywhere, so free-vertex deletion (Chew) was evaluated and
+  deliberately **not** pursued — high-risk for no measured benefit. The full path,
+  steps, lessons, and the size analysis are in
   [docs/refinement-performance.md](docs/refinement-performance.md); the
   small-feature *termination* work behind it (concentric shells + the
   Miller–Pav–Walkington skip) is in
-  [docs/refinement-small-features.md](docs/refinement-small-features.md). The one
-  remaining gap is **size** — on synthetic area cases we still make a few percent
-  more triangles than native, which free-vertex deletion (Chew) would close.
+  [docs/refinement-small-features.md](docs/refinement-small-features.md).
 - **A global (non-regional) area bound** is not part of the API (per-region max
   area *is* honoured).
 - **Native platforms** other than Windows x64 need their shared library built

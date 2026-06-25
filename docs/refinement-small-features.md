@@ -105,7 +105,16 @@ We have no equivalent: `badTriangle` enqueues every below-bound triangle.
 When splitting a *non*-shared encroached segment, Triangle first deletes any
 free (Steiner) vertices already inside the segment's diametral circle. This
 keeps the boundary clean and is part of why native produces *fewer* points.
-Lower priority than §2.1/§2.2 but it needs a vertex-deletion op (see §3).
+Needs a vertex-deletion op (`deletevertex`, triangle.c:5626 — remove an interior
+free vertex and re-triangulate its star; see §3).
+
+**Evaluated and declined.** After the speed work, java-vs-native triangle counts
+were measured across the bench suite and we sit at parity or *below* native
+almost everywhere (and 101 triangles below on the captured q=33 case). The only
+overage is ~3–4 triangles on tiny pure-angle cases, which this rule does not even
+target. The deletion op is the one genuinely hard new mesh operation, so it is
+not worth building for no measured gain. Details and the table are in
+[refinement-performance.md](refinement-performance.md) §5.
 
 ### 2.4 Shortest-edge priority queue — triangle.c:3711–3806
 
@@ -157,12 +166,14 @@ is the right foundation. New capabilities it (or the refiner) will need:
    correctness: maintained triangle adjacency, a shortest-edge-length bad-triangle
    queue, and a maintained encroachment index took q=33 from ~9.7 s to ~0.17 s.
    Full record in [refinement-performance.md](refinement-performance.md).
-4. **5d — free-vertex deletion** (§2.3). **Open follow-up** — the remaining gap to
-   native is *size* (we make a few percent more triangles on synthetic area cases).
-   This is the lever that closes it, and the one genuinely hard new mesh op.
+4. **5d — free-vertex deletion** (§2.3). **Declined** — measured: we are already
+   at size parity with native (or below it), so the one genuinely hard new mesh op
+   is not worth its risk. Re-open only with a concrete input that shows a gap it
+   closes.
 
 5a/5b made q=33 converge with a contract-valid mesh (the correctness goal); 5c
-made it fast; 5d (size) is optional and not yet started.
+made it fast; 5d (size) was evaluated against measurements and declined. The
+refinement work is complete.
 
 ## 5. Validation
 
