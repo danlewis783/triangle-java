@@ -103,7 +103,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
            go stale - their slot freed or reused - so revalidate on dequeue. */
         PriorityQueue<BadTri> bad =
                 new PriorityQueue<>(Comparator.comparingDouble(e -> e.key));
-        List<int[]> seed = mesh.trianglesView();
+        List<Triangle> seed = mesh.trianglesView();
         for (int id = 0; id < seed.size(); id++) {
             if (seed.get(id) != null) {
                 enqueueIfBad(bad, mesh, id, cosSqBound, maxAreaByAttr);
@@ -116,7 +116,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
                these are stable lists mutated in place (dead triangles appear as
                null, so the scans skip them). A mutation may free/reuse slots, so a
                triangle index is only valid until the next split/insert. */
-            List<int[]> tris = mesh.trianglesView();
+            List<Triangle> tris = mesh.trianglesView();
             List<double[]> points = mesh.pointsView();
             List<int[]> segments = mesh.segmentsView();
 
@@ -174,17 +174,16 @@ public final class JavaTriangleMesher implements TriangleMesher {
     private static void enqueueIfBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
                                      int id, double cosSqBound,
                                      Map<Double, Double> maxAreaByAttr) {
-        int[] tc = mesh.trianglesView().get(id);
+        Triangle tc = mesh.trianglesView().get(id);
         if (tc == null) {
             return;
         }
         List<double[]> points = mesh.pointsView();
-        List<Double> attrs = mesh.attrsView();
-        int ia = tc[0], ib = tc[1], ic = tc[2];
+        int ia = tc.a, ib = tc.b, ic = tc.c;
         double[] a = points.get(ia), b = points.get(ib), c = points.get(ic);
         boolean isBad = false;
-        if (!maxAreaByAttr.isEmpty() && attrs != null) {
-            Double maxArea = maxAreaByAttr.get(attrs.get(id));
+        if (!maxAreaByAttr.isEmpty() && mesh.hasAttributes()) {
+            Double maxArea = maxAreaByAttr.get(tc.attr);
             isBad = maxArea != null && triangleArea(a, b, c) > maxArea;
         }
         if (!isBad) {
@@ -211,10 +210,10 @@ public final class JavaTriangleMesher implements TriangleMesher {
         stale entries (slot freed, or reused for a different triangle). A surviving
         triangle's corners are unchanged, so it is still bad - no re-test needed. */
     private static int dequeueValidBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh) {
-        List<int[]> tris = mesh.trianglesView();
+        List<Triangle> tris = mesh.trianglesView();
         while (!bad.isEmpty()) {
             BadTri e = bad.poll();
-            int[] cur = tris.get(e.id);
+            Triangle cur = tris.get(e.id);
             if (cur != null && sameCorners(cur, e.a, e.b, e.c)) {
                 return e.id;
             }
@@ -224,10 +223,10 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
     /** Whether {@code tc} has exactly the corner set {a, b, c} (the corners are
         distinct, so containment in both directions reduces to this). */
-    private static boolean sameCorners(int[] tc, int a, int b, int c) {
-        return (tc[0] == a || tc[1] == a || tc[2] == a)
-                && (tc[0] == b || tc[1] == b || tc[2] == b)
-                && (tc[0] == c || tc[1] == c || tc[2] == c);
+    private static boolean sameCorners(Triangle tc, int a, int b, int c) {
+        return (tc.a == a || tc.b == a || tc.c == a)
+                && (tc.a == b || tc.b == b || tc.c == b)
+                && (tc.a == c || tc.b == c || tc.c == c);
     }
 
     /** First subsegment with an adjacent triangle apex inside its diametral disk.
@@ -359,10 +358,10 @@ public final class JavaTriangleMesher implements TriangleMesher {
      * is numerically unreliable for skinny triangles). Aims a small margin above
      * the bound so the new triangle is not re-selected at exactly the threshold.
      */
-    private static double[] offCentre(List<int[]> tris, List<double[]> points,
+    private static double[] offCentre(List<Triangle> tris, List<double[]> points,
                                       int t, double boundDegrees) {
-        int[] tc = tris.get(t);
-        double[] a = points.get(tc[0]), b = points.get(tc[1]), c = points.get(tc[2]);
+        Triangle tc = tris.get(t);
+        double[] a = points.get(tc.a), b = points.get(tc.b), c = points.get(tc.c);
 
         double[] p, q, r;                          /* p,q = shortest edge; r = apex */
         double ab = dist2(a, b), bc = dist2(b, c), ca = dist2(c, a);
@@ -413,9 +412,9 @@ public final class JavaTriangleMesher implements TriangleMesher {
         return dx * dx + dy * dy;
     }
 
-    private static double[] circumcentre(List<int[]> tris, List<double[]> points, int t) {
-        int[] tc = tris.get(t);
-        double[] a = points.get(tc[0]), b = points.get(tc[1]), c = points.get(tc[2]);
+    private static double[] circumcentre(List<Triangle> tris, List<double[]> points, int t) {
+        Triangle tc = tris.get(t);
+        double[] a = points.get(tc.a), b = points.get(tc.b), c = points.get(tc.c);
         double d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
         double a2 = a[0] * a[0] + a[1] * a[1];
         double b2 = b[0] * b[0] + b[1] * b[1];
