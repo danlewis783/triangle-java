@@ -569,31 +569,12 @@ final class IncrementalCdt {
 
     /* --- helpers (mirroring ConstrainedDelaunayTriangulator) ----------------- */
 
-    /** neigh[3*i+j] = triangle across the edge opposite corner j, or -1. Skips
-        null (dead) slots, so it serves both the one-time construction build and
-        the {@link #adjacencyConsistent()} cross-check. */
+    /** Triangle adjacency over the live triangles {@code ts}, delegating to the
+        shared {@link Topology#neighbors}. Callers pass a null-free list: the
+        construction build runs before any slot is freed, and
+        {@link #adjacencyConsistent()} compacts the live triangles first. */
     private int[] adjacency(List<Triangle> ts) {
-        int n = ts.size();
-        int[] neigh = new int[3 * n];
-        Arrays.fill(neigh, -1);
-        Map<Long, int[]> edge = new HashMap<>();
-        for (int i = 0; i < n; i++) {
-            Triangle t = ts.get(i);
-            if (t == null) {
-                continue;
-            }
-            for (int j = 0; j < 3; j++) {
-                long k = key(t.corner((j + 1) % 3), t.corner((j + 2) % 3));
-                int[] prev = edge.get(k);
-                if (prev == null) {
-                    edge.put(k, new int[]{i, j});
-                } else {
-                    neigh[3 * i + j] = prev[0];
-                    neigh[3 * prev[0] + prev[1]] = i;
-                }
-            }
-        }
-        return neigh;
+        return Topology.neighbors(ts.size(), (i, c) -> ts.get(i).corner(c));
     }
 
     private int locate(double x, double y) {
@@ -633,7 +614,6 @@ final class IncrementalCdt {
     }
 
     private static long key(int a, int b) {
-        int lo = Math.min(a, b), hi = Math.max(a, b);
-        return ((long) lo << 32) | (hi & 0xffffffffL);
+        return Topology.edgeKey(a, b);
     }
 }

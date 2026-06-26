@@ -277,26 +277,10 @@ public final class ConstrainedDelaunayTriangulator {
 
     /* --- 5/6. carving and region attribution --------------------------------- */
 
-    /** triangle adjacency: neigh[3*i+j] = triangle across edge opposite corner j. */
+    /** Triangle adjacency: neigh[3*i+j] = triangle across the edge opposite
+        corner j, or -1. Delegates to the shared {@link Topology#neighbors}. */
     private static int[] adjacency(List<Corners> tris) {
-        int n = tris.size();
-        int[] neigh = new int[3 * n];
-        Arrays.fill(neigh, -1);
-        Map<Long, int[]> edge = new HashMap<>();
-        for (int i = 0; i < n; i++) {
-            Corners t = tris.get(i);
-            for (int j = 0; j < 3; j++) {
-                long k = key(t.corner((j + 1) % 3), t.corner((j + 2) % 3));
-                int[] prev = edge.get(k);
-                if (prev == null) {
-                    edge.put(k, new int[]{i, j});
-                } else {
-                    neigh[3 * i + j] = prev[0];
-                    neigh[3 * prev[0] + prev[1]] = i;
-                }
-            }
-        }
-        return neigh;
+        return Topology.neighbors(tris.size(), (i, c) -> tris.get(i).corner(c));
     }
 
     private static boolean[] carve(double[] pts, List<Corners> tris, Set<Long> segSet,
@@ -431,7 +415,8 @@ public final class ConstrainedDelaunayTriangulator {
                 o.triangleAttributeList[i] = attr[keep.get(i)];
             }
         }
-        o.neighborList = rebuildNeighbors(o.triangleList, t);
+        int[] tri = o.triangleList;
+        o.neighborList = Topology.neighbors(t, (i, c) -> tri[3 * i + c]);
 
         o.numberOfSegments = pslg.segments.size();
         o.segmentList = new int[2 * pslg.segments.size()];
@@ -443,25 +428,6 @@ public final class ConstrainedDelaunayTriangulator {
             o.segmentMarkerList[i] = s[2];
         }
         return o;
-    }
-
-    private static int[] rebuildNeighbors(int[] tri, int t) {
-        int[] neigh = new int[3 * t];
-        Arrays.fill(neigh, -1);
-        Map<Long, int[]> edge = new HashMap<>();
-        for (int i = 0; i < t; i++) {
-            for (int j = 0; j < 3; j++) {
-                long k = key(tri[3 * i + (j + 1) % 3], tri[3 * i + (j + 2) % 3]);
-                int[] prev = edge.get(k);
-                if (prev == null) {
-                    edge.put(k, new int[]{i, j});
-                } else {
-                    neigh[3 * i + j] = prev[0];
-                    neigh[3 * prev[0] + prev[1]] = i;
-                }
-            }
-        }
-        return neigh;
     }
 
     /* --- geometry helpers ---------------------------------------------------- */
@@ -527,7 +493,6 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     private static long key(int a, int b) {
-        int lo = Math.min(a, b), hi = Math.max(a, b);
-        return ((long) lo << 32) | (hi & 0xffffffffL);
+        return Topology.edgeKey(a, b);
     }
 }

@@ -4,10 +4,8 @@ import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.predicate.Predicates;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -119,30 +117,9 @@ public final class DelaunayTriangulator {
             o.triangleList[3 * i + 1] = t.b;
             o.triangleList[3 * i + 2] = t.c;
         }
-        o.neighborList = buildNeighbors(o.triangleList, tris.size());
+        int[] tri = o.triangleList;
+        o.neighborList = Topology.neighbors(tris.size(), (i, c) -> tri[3 * i + c]);
         return o;
-    }
-
-    /** neighbor[3*i+j] = triangle across the edge opposite corner j, or -1. */
-    private static int[] buildNeighbors(int[] tri, int t) {
-        int[] neigh = new int[t * 3];
-        Arrays.fill(neigh, -1);
-        Map<Long, int[]> firstSeen = new HashMap<>();
-        for (int i = 0; i < t; i++) {
-            for (int j = 0; j < 3; j++) {
-                int u = tri[3 * i + (j + 1) % 3];
-                int v = tri[3 * i + (j + 2) % 3];
-                long key = undirected(u, v);
-                int[] prev = firstSeen.get(key);
-                if (prev == null) {
-                    firstSeen.put(key, new int[]{i, j});
-                } else {
-                    neigh[3 * i + j] = prev[0];
-                    neigh[3 * prev[0] + prev[1]] = i;
-                }
-            }
-        }
-        return neigh;
     }
 
     private static void addSuperTriangle(double[] pts, int n, int sa, int sb, int sc) {
@@ -183,10 +160,5 @@ public final class DelaunayTriangulator {
 
     private static long directed(int a, int b) {
         return ((long) a << 32) | (b & 0xffffffffL);
-    }
-
-    private static long undirected(int a, int b) {
-        int lo = Math.min(a, b), hi = Math.max(a, b);
-        return ((long) lo << 32) | (hi & 0xffffffffL);
     }
 }
