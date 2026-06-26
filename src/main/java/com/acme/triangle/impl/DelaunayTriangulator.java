@@ -46,7 +46,7 @@ public final class DelaunayTriangulator {
         int sa = numPoints, sb = numPoints + 1, sc = numPoints + 2;
         addSuperTriangle(pts, numPoints, sa, sb, sc);
 
-        List<int[]> triangles = new ArrayList<>();
+        List<Corners> triangles = new ArrayList<>();
         triangles.add(ccw(pts, sa, sb, sc));
 
         for (int p = 0; p < numPoints; p++) {
@@ -54,19 +54,19 @@ public final class DelaunayTriangulator {
         }
 
         /* Drop triangles incident to a super-triangle vertex. */
-        List<int[]> kept = new ArrayList<>();
-        for (int[] t : triangles) {
-            if (t[0] < numPoints && t[1] < numPoints && t[2] < numPoints) {
+        List<Corners> kept = new ArrayList<>();
+        for (Corners t : triangles) {
+            if (t.a < numPoints && t.b < numPoints && t.c < numPoints) {
                 kept.add(t);
             }
         }
         return buildOutput(points, numPoints, kept);
     }
 
-    private static void insert(double[] pts, List<int[]> triangles, int p) {
-        List<int[]> survivors = new ArrayList<>();
-        List<int[]> cavity = new ArrayList<>();
-        for (int[] t : triangles) {
+    private static void insert(double[] pts, List<Corners> triangles, int p) {
+        List<Corners> survivors = new ArrayList<>();
+        List<Corners> cavity = new ArrayList<>();
+        for (Corners t : triangles) {
             if (inCircumcircle(pts, t, p)) {
                 cavity.add(t);
             } else {
@@ -76,37 +76,37 @@ public final class DelaunayTriangulator {
         /* All directed edges of cavity triangles; an edge is on the cavity
            boundary when its reverse is not also a cavity edge. */
         Set<Long> cavityEdges = new HashSet<>();
-        for (int[] t : cavity) {
-            cavityEdges.add(directed(t[0], t[1]));
-            cavityEdges.add(directed(t[1], t[2]));
-            cavityEdges.add(directed(t[2], t[0]));
+        for (Corners t : cavity) {
+            cavityEdges.add(directed(t.a, t.b));
+            cavityEdges.add(directed(t.b, t.c));
+            cavityEdges.add(directed(t.c, t.a));
         }
-        for (int[] t : cavity) {
-            connect(pts, survivors, cavityEdges, t[0], t[1], p);
-            connect(pts, survivors, cavityEdges, t[1], t[2], p);
-            connect(pts, survivors, cavityEdges, t[2], t[0], p);
+        for (Corners t : cavity) {
+            connect(pts, survivors, cavityEdges, t.a, t.b, p);
+            connect(pts, survivors, cavityEdges, t.b, t.c, p);
+            connect(pts, survivors, cavityEdges, t.c, t.a, p);
         }
         triangles.clear();
         triangles.addAll(survivors);
     }
 
     /** If (a,b) is a boundary edge, add the new triangle joining it to p (CCW). */
-    private static void connect(double[] pts, List<int[]> out, Set<Long> cavityEdges,
+    private static void connect(double[] pts, List<Corners> out, Set<Long> cavityEdges,
                                 int a, int b, int p) {
         if (cavityEdges.contains(directed(b, a))) {
             return;                                 /* interior cavity edge */
         }
         int s = orient(pts, a, b, p);
         if (s > 0) {
-            out.add(new int[]{a, b, p});
+            out.add(new Corners(a, b, p));
         } else if (s < 0) {
-            out.add(new int[]{b, a, p});
+            out.add(new Corners(b, a, p));
         }
         /* s == 0: p collinear with the boundary edge - degenerate, skip. */
     }
 
     private static TriangleMesherOutput buildOutput(double[] points, int n,
-                                                    List<int[]> tris) {
+                                                    List<Corners> tris) {
         TriangleMesherOutput o = new TriangleMesherOutput();
         o.numberOfPoints = n;
         o.pointList = Arrays.copyOf(points, n * 2);
@@ -114,10 +114,10 @@ public final class DelaunayTriangulator {
         o.numberOfSegments = 0;
         o.triangleList = new int[tris.size() * 3];
         for (int i = 0; i < tris.size(); i++) {
-            int[] t = tris.get(i);
-            o.triangleList[3 * i] = t[0];
-            o.triangleList[3 * i + 1] = t[1];
-            o.triangleList[3 * i + 2] = t[2];
+            Corners t = tris.get(i);
+            o.triangleList[3 * i] = t.a;
+            o.triangleList[3 * i + 1] = t.b;
+            o.triangleList[3 * i + 2] = t.c;
         }
         o.neighborList = buildNeighbors(o.triangleList, tris.size());
         return o;
@@ -164,8 +164,8 @@ public final class DelaunayTriangulator {
         pts[2 * sc] = cx;         pts[2 * sc + 1] = cy + m;
     }
 
-    private static int[] ccw(double[] pts, int a, int b, int c) {
-        return orient(pts, a, b, c) >= 0 ? new int[]{a, b, c} : new int[]{a, c, b};
+    private static Corners ccw(double[] pts, int a, int b, int c) {
+        return orient(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
     }
 
     private static int orient(double[] pts, int a, int b, int c) {
@@ -173,11 +173,11 @@ public final class DelaunayTriangulator {
                 pts[2 * b], pts[2 * b + 1], pts[2 * c], pts[2 * c + 1]);
     }
 
-    private static boolean inCircumcircle(double[] pts, int[] t, int p) {
+    private static boolean inCircumcircle(double[] pts, Corners t, int p) {
         return Predicates.incircle(
-                pts[2 * t[0]], pts[2 * t[0] + 1],
-                pts[2 * t[1]], pts[2 * t[1] + 1],
-                pts[2 * t[2]], pts[2 * t[2] + 1],
+                pts[2 * t.a], pts[2 * t.a + 1],
+                pts[2 * t.b], pts[2 * t.b + 1],
+                pts[2 * t.c], pts[2 * t.c + 1],
                 pts[2 * p], pts[2 * p + 1]) > 0;
     }
 
