@@ -312,22 +312,19 @@ public final class JavaTriangleMesher implements TriangleMesher {
             b1 = ic; b2 = ia;
         }
 
-        if (cdt.vertexType(b1) != IncrementalCdt.VertexType.SEGMENT
-                || cdt.vertexType(b2) != IncrementalCdt.VertexType.SEGMENT) {
+        Provenance p1 = cdt.provenance(b1), p2 = cdt.provenance(b2);
+        if (p1.type != VertexType.SEGMENT || p2.type != VertexType.SEGMENT) {
             return false;
         }
-        int[] s1 = cdt.vertexSeg(b1), s2 = cdt.vertexSeg(b2);
-        if (s1 == null || s2 == null) {
-            return false;
-        }
-        if ((s1[0] == s2[0] && s1[1] == s2[1]) || (s1[0] == s2[1] && s1[1] == s2[0])) {
+        if ((p1.origOrg == p2.origOrg && p1.origDest == p2.origDest)
+                || (p1.origOrg == p2.origDest && p1.origDest == p2.origOrg)) {
             return false;                          /* same input segment: split normally */
         }
         int join = -1;
-        if (s1[0] == s2[0] || s1[0] == s2[1]) {
-            join = s1[0];
-        } else if (s1[1] == s2[0] || s1[1] == s2[1]) {
-            join = s1[1];
+        if (p1.origOrg == p2.origOrg || p1.origOrg == p2.origDest) {
+            join = p1.origOrg;
+        } else if (p1.origDest == p2.origOrg || p1.origDest == p2.origDest) {
+            join = p1.origDest;
         }
         if (join < 0) {
             return false;                          /* the two segments do not meet */

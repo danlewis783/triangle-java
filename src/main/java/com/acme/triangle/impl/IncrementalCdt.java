@@ -42,19 +42,8 @@ import java.util.Set;
  */
 final class IncrementalCdt {
 
-    /** Vertex provenance, needed by the small-feature refinement rules. */
-    enum VertexType {
-        /** An original input vertex (segment joins). */
-        INPUT,
-        /** Created by splitting a segment (on its interior). */
-        SEGMENT,
-        /** An interior Steiner point. */
-        FREE
-    }
-
-    private final List<double[]> points = new ArrayList<>();
-    private final List<VertexType> vtype = new ArrayList<>();  /* provenance per vertex */
-    private final List<int[]> vseg = new ArrayList<>();       /* {origOrg,origDest} for SEGMENT, else null */
+    private final List<double[]> points = new ArrayList<>();  /* coordinates per vertex */
+    private final List<Provenance> provenances = new ArrayList<>();  /* identity per vertex */
     private final List<Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
     private final boolean haveAttr;                           /* whether triangles carry a region attribute */
     private final List<Segment> segments = new ArrayList<>();
@@ -81,8 +70,7 @@ final class IncrementalCdt {
     IncrementalCdt(TriangleMesherOutput base) {
         for (int i = 0; i < base.numberOfPoints; i++) {
             points.add(new double[]{base.pointList[2 * i], base.pointList[2 * i + 1]});
-            vtype.add(VertexType.INPUT);
-            vseg.add(null);
+            provenances.add(new Provenance(VertexType.INPUT, -1, -1));
         }
         haveAttr = base.triangleAttributeList != null;
         for (int i = 0; i < base.numberOfTriangles; i++) {     /* corners now, links below */
@@ -118,13 +106,10 @@ final class IncrementalCdt {
         }
     }
 
-    VertexType vertexType(int i) {
-        return vtype.get(i);
-    }
-
-    /** For a SEGMENT vertex, the original input segment's endpoints; else null. */
-    int[] vertexSeg(int i) {
-        return vseg.get(i);
+    /** The provenance (kind, and original segment for a split-segment vertex) of
+        vertex {@code i}. */
+    Provenance provenance(int i) {
+        return provenances.get(i);
     }
 
     /* Live views for the refinement loop, so it reads the mesh in place rather
@@ -177,8 +162,7 @@ final class IncrementalCdt {
         }
         int pIdx = points.size();
         points.add(p);
-        vtype.add(VertexType.FREE);
-        vseg.add(null);
+        provenances.add(new Provenance(VertexType.FREE, -1, -1));
         insertViaCavity(pIdx, new int[]{start}, -1L);
         return pIdx;
     }
@@ -209,8 +193,7 @@ final class IncrementalCdt {
         int mIdx = points.size();
         points.add(new double[]{pa[0] + frac * (pb[0] - pa[0]),
                 pa[1] + frac * (pb[1] - pa[1])});
-        vtype.add(VertexType.SEGMENT);
-        vseg.add(new int[]{origOrg, origDest});
+        provenances.add(new Provenance(VertexType.SEGMENT, origOrg, origDest));
 
         segSet.remove(key(a, b));            /* let the cavity span the old segment */
         segTri.remove(key(a, b));
@@ -251,8 +234,8 @@ final class IncrementalCdt {
      * Away from joins, split at the midpoint.
      */
     private double shellSplitFraction(int a, int b) {
-        boolean acuteOrg = vtype.get(a) == VertexType.INPUT;
-        boolean acuteDest = vtype.get(b) == VertexType.INPUT;
+        boolean acuteOrg = provenances.get(a).type == VertexType.INPUT;
+        boolean acuteDest = provenances.get(b).type == VertexType.INPUT;
         if (!acuteOrg && !acuteDest) {
             return 0.5;
         }
