@@ -1,7 +1,6 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesherOutput;
-import com.acme.triangle.predicate.Predicates;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -589,16 +588,11 @@ final class IncrementalCdt {
     }
 
     private boolean inCircle(Triangle t, Point p) {
-        return Predicates.incircle(
-                points.x(t.a), points.y(t.a),
-                points.x(t.b), points.y(t.b),
-                points.x(t.c), points.y(t.c),
-                p.x, p.y) > 0;
+        return Geometry.inCircle(points, t.a, t.b, t.c, p);
     }
 
     private int orientXY(int a, int b, double x, double y) {
-        return Predicates.orient2d(points.x(a), points.y(a),
-                points.x(b), points.y(b), x, y);
+        return Geometry.orient2d(points, a, b, x, y);
     }
 
     private double dist2(int a, int b) {

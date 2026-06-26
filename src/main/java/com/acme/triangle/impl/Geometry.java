@@ -1,22 +1,23 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.predicate.Predicates;
+import java.util.List;
 
 /**
- * Robust geometric predicates over a flat interleaved coordinate array, where
- * vertex {@code i} is at {@code pts[2*i], pts[2*i+1]}. Wraps the exact
- * {@link Predicates} with the index addressing that the construction stages -
- * the initial Delaunay and constraint recovery - share.
- * <p>
- * The refinement kernel ({@link IncrementalCdt}) deliberately keeps its own
- * list-backed wrappers rather than routing here: it stores coordinates as a
- * growing {@code List<double[]>}, and these tests sit on its insertion hot path,
- * so it reads them directly without a second coordinate representation.
+ * The single front door to the robust {@link Predicates}: every orientation and
+ * in-circle test in the mesher routes through here, so {@code Predicates} stays
+ * an implementation detail reached nowhere else in this package. Methods come in
+ * families by the coordinate store the caller holds - a flat interleaved
+ * {@code double[]} and a pre-flatten {@code List<double[]>} for the construction
+ * stages, and a {@link Points} for the refinement kernel - each feeding the same
+ * exact predicate.
  */
 final class Geometry {
 
     private Geometry() {
     }
+
+    /* --- flat double[]: vertex i at (pts[2*i], pts[2*i+1]) ------------------- */
 
     /** Orientation of vertices (a, b, c): &gt;0 CCW, &lt;0 CW, 0 collinear. */
     static int orient2d(double[] pts, int a, int b, int c) {
@@ -37,5 +38,31 @@ final class Geometry {
                 pts[2 * t.b], pts[2 * t.b + 1],
                 pts[2 * t.c], pts[2 * t.c + 1],
                 pts[2 * d], pts[2 * d + 1]) > 0;
+    }
+
+    /* --- pre-flatten List<double[]> (intersection splitting) ----------------- */
+
+    /** Orientation of vertices (a, b, c) over the not-yet-flattened point list. */
+    static int orient2d(List<double[]> pts, int a, int b, int c) {
+        return Predicates.orient2d(pts.get(a)[0], pts.get(a)[1],
+                pts.get(b)[0], pts.get(b)[1], pts.get(c)[0], pts.get(c)[1]);
+    }
+
+    /* --- Points (refinement kernel) ----------------------------------------- */
+
+    /** Orientation of directed edge (a, b) against the loose point (x, y). */
+    static int orient2d(Points points, int a, int b, double x, double y) {
+        return Predicates.orient2d(points.x(a), points.y(a),
+                points.x(b), points.y(b), x, y);
+    }
+
+    /** Whether the loose point {@code p} lies inside the circumcircle of the CCW
+        triangle with corners {@code (a, b, c)}. */
+    static boolean inCircle(Points points, int a, int b, int c, Point p) {
+        return Predicates.incircle(
+                points.x(a), points.y(a),
+                points.x(b), points.y(b),
+                points.x(c), points.y(c),
+                p.x, p.y) > 0;
     }
 }

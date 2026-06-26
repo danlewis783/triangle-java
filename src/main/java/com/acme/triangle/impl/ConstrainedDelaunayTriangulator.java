@@ -2,7 +2,6 @@ package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
-import com.acme.triangle.predicate.Predicates;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -476,8 +475,7 @@ public final class ConstrainedDelaunayTriangulator {
         into the {@code double[]} the rest of the pipeline (and {@link Geometry})
         addresses. */
     private static int orient(List<double[]> pts, int a, int b, int c) {
-        return Predicates.orient2d(pts.get(a)[0], pts.get(a)[1], pts.get(b)[0],
-                pts.get(b)[1], pts.get(c)[0], pts.get(c)[1]);
+        return Geometry.orient2d(pts, a, b, c);
     }
 
     private static long key(int a, int b) {
