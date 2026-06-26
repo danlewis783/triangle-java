@@ -1,7 +1,7 @@
 {
   "formatVersion" : 1,
   "documentType" : "triangle-mesher-input",
-  "name" : "20260625-143710-768-000038-java",
+  "name" : "poly-6gon-02",
   "tags" : [ ],
   "input" : {
     "pointList" : [ 0.0, -2.8015627E-16, 3.0, 0.0, 3.0, 0.01, 0.01, 0.01, 0.01, 3.0, 0.0, 3.0 ],

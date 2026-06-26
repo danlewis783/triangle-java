@@ -1,7 +1,7 @@
 {
   "formatVersion" : 1,
   "documentType" : "triangle-mesher-input",
-  "name" : "20260625-143810-948-000042-java",
+  "name" : "rect-4x4",
   "tags" : [ ],
   "input" : {
     "pointList" : [ 0.0, 4.0, 0.0, 0.0, 4.0, 0.0, 4.0, 4.0 ],

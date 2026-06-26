@@ -190,6 +190,22 @@ build the corresponding shared library and place it under the matching prefix
 
 ---
 
+## Benchmarks
+
+`./gradlew bench` runs a java-vs-native micro-benchmark (`light` / `heavy`
+synthetic suites, or a directory of captured JSON inputs):
+
+```
+./gradlew bench --args="heavy"
+./gradlew bench --args="src/bench/resources/inputs/regression"
+```
+
+The captured corpus (real consumer + fuzz inputs, all at the q=33 bound that drove
+the refinement work) is catalogued — by geometry — in
+[its README](src/bench/resources/inputs/regression/README.md).
+
+---
+
 ## Limitations & possible follow-ups
 
 - **Performance.** Done, with no meaningful gap left to native. Filtered
