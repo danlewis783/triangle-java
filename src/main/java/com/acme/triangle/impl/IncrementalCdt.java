@@ -42,7 +42,7 @@ import java.util.Set;
  */
 final class IncrementalCdt {
 
-    private final List<double[]> points = new ArrayList<>();  /* coordinates per vertex */
+    private final Points points;                              /* coordinates per vertex */
     private final List<Provenance> provenances = new ArrayList<>();  /* identity per vertex */
     private final List<Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
     private final boolean haveAttr;                           /* whether triangles carry a region attribute */
@@ -68,8 +68,8 @@ final class IncrementalCdt {
     private int gen;
 
     IncrementalCdt(TriangleMesherOutput base) {
+        points = new Points(base.pointList, base.numberOfPoints);
         for (int i = 0; i < base.numberOfPoints; i++) {
-            points.add(new double[]{base.pointList[2 * i], base.pointList[2 * i + 1]});
             provenances.add(new Provenance(VertexType.INPUT, -1, -1));
         }
         haveAttr = base.triangleAttributeList != null;
@@ -117,7 +117,7 @@ final class IncrementalCdt {
        are mutated in place (slots reused/nulled), so the references are stable;
        dead triangles appear as null and scanning consumers must skip them. */
 
-    List<double[]> pointsView() {
+    Points pointsView() {
         return points;
     }
 
@@ -155,13 +155,12 @@ final class IncrementalCdt {
      *
      * @return the new vertex index
      */
-    int insertInteriorPoint(double[] p) {
-        int start = locate(p[0], p[1]);
+    int insertInteriorPoint(Point p) {
+        int start = locate(p.x, p.y);
         if (start < 0) {
             throw new IllegalArgumentException("point is not inside the domain");
         }
-        int pIdx = points.size();
-        points.add(p);
+        int pIdx = points.add(p);
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
         insertViaCavity(pIdx, new int[]{start}, -1L);
         return pIdx;
@@ -189,10 +188,8 @@ final class IncrementalCdt {
             throw new IllegalStateException("segment (" + a + "," + b + ") is not an edge");
         }
         double frac = shellSplitFraction(a, b);
-        double[] pa = points.get(a), pb = points.get(b);
-        int mIdx = points.size();
-        points.add(new double[]{pa[0] + frac * (pb[0] - pa[0]),
-                pa[1] + frac * (pb[1] - pa[1])});
+        double ax = points.x(a), ay = points.y(a), bx = points.x(b), by = points.y(b);
+        int mIdx = points.add(ax + frac * (bx - ax), ay + frac * (by - ay));
         provenances.add(new Provenance(VertexType.SEGMENT, origOrg, origDest));
 
         segSet.remove(key(a, b));            /* let the cavity span the old segment */
@@ -239,7 +236,7 @@ final class IncrementalCdt {
         if (!acuteOrg && !acuteDest) {
             return 0.5;
         }
-        double len = Math.sqrt(dist2(points.get(a), points.get(b)));
+        double len = Math.sqrt(dist2(a, b));
         double npot = 1.0;
         while (len > 3.0 * npot) {
             npot *= 2.0;
@@ -275,7 +272,7 @@ final class IncrementalCdt {
      * neighbour's link back into the cavity is repointed to the new triangle.
      */
     private void insertViaCavity(int pIdx, int[] seeds, long skipEdgeKey) {
-        double[] p = points.get(pIdx);
+        Point p = points.at(pIdx);
         gen++;
         lastFan.clear();
         List<Integer> cavity = new ArrayList<>();
@@ -462,11 +459,7 @@ final class IncrementalCdt {
     TriangleMesherOutput toOutput() {
         TriangleMesherOutput o = new TriangleMesherOutput();
         o.numberOfPoints = points.size();
-        o.pointList = new double[points.size() * 2];
-        for (int i = 0; i < points.size(); i++) {
-            o.pointList[2 * i] = points.get(i)[0];
-            o.pointList[2 * i + 1] = points.get(i)[1];
-        }
+        o.pointList = points.toArray();
         /* Compact live slots to contiguous output indices, remapping the
            maintained neighbour links through the same mapping. */
         int[] remap = new int[tris.size()];
@@ -546,7 +539,7 @@ final class IncrementalCdt {
     }
 
     /** Centroid of the current largest-area triangle (a robust interior point). */
-    double[] centroidOfLargestTriangle() {
+    Point centroidOfLargestTriangle() {
         int best = -1;
         double bestArea = -1;
         for (int i = 0; i < tris.size(); i++) {
@@ -554,17 +547,17 @@ final class IncrementalCdt {
             if (t == null) {
                 continue;
             }
-            double[] a = points.get(t.a), b = points.get(t.b), c = points.get(t.c);
-            double area = Math.abs((b[0] - a[0]) * (c[1] - a[1])
-                    - (b[1] - a[1]) * (c[0] - a[0])) / 2.0;
+            double area = Math.abs((points.x(t.b) - points.x(t.a)) * (points.y(t.c) - points.y(t.a))
+                    - (points.y(t.b) - points.y(t.a)) * (points.x(t.c) - points.x(t.a))) / 2.0;
             if (area > bestArea) {
                 bestArea = area;
                 best = i;
             }
         }
         Triangle t = tris.get(best);
-        double[] a = points.get(t.a), b = points.get(t.b), c = points.get(t.c);
-        return new double[]{(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0};
+        double cx = (points.x(t.a) + points.x(t.b) + points.x(t.c)) / 3.0;
+        double cy = (points.y(t.a) + points.y(t.b) + points.y(t.c)) / 3.0;
+        return new Point(cx, cy);
     }
 
     /* --- helpers (mirroring ConstrainedDelaunayTriangulator) ----------------- */
@@ -595,21 +588,21 @@ final class IncrementalCdt {
         return -1;
     }
 
-    private boolean inCircle(Triangle t, double[] p) {
+    private boolean inCircle(Triangle t, Point p) {
         return Predicates.incircle(
-                points.get(t.a)[0], points.get(t.a)[1],
-                points.get(t.b)[0], points.get(t.b)[1],
-                points.get(t.c)[0], points.get(t.c)[1],
-                p[0], p[1]) > 0;
+                points.x(t.a), points.y(t.a),
+                points.x(t.b), points.y(t.b),
+                points.x(t.c), points.y(t.c),
+                p.x, p.y) > 0;
     }
 
     private int orientXY(int a, int b, double x, double y) {
-        return Predicates.orient2d(points.get(a)[0], points.get(a)[1],
-                points.get(b)[0], points.get(b)[1], x, y);
+        return Predicates.orient2d(points.x(a), points.y(a),
+                points.x(b), points.y(b), x, y);
     }
 
-    private static double dist2(double[] p, double[] q) {
-        double dx = p[0] - q[0], dy = p[1] - q[1];
+    private double dist2(int a, int b) {
+        double dx = points.x(a) - points.x(b), dy = points.y(a) - points.y(b);
         return dx * dx + dy * dy;
     }
 
