@@ -12,8 +12,8 @@ import java.util.List;
  * against the structural contract, and returns the primary's output. When the
  * primary's mesh is invalid, the {@link DivergenceHandler} is notified so the
  * caller can log (shadow mode) or throw (strict mode).
- *
- * <p>The comparison is deliberately contract-based, not output equality: two
+ * <p>
+ * The comparison is deliberately contract-based, not output equality: two
  * correct meshers legitimately produce different valid meshes, so equality would
  * be the wrong bar. The reference's violations are passed along for context
  * (normally empty for a trusted reference).

@@ -5,20 +5,20 @@ import java.math.BigDecimal;
 /**
  * Robust geometric predicates: the exact sign of the orient2d and incircle
  * determinants.
- *
- * <p>Correctness of the <em>sign</em> on near-degenerate inputs is what the
+ * <p>
+ * Correctness of the <em>sign</em> on near-degenerate inputs is what the
  * mesh algorithm depends on; a wrong sign yields invalid topology, not merely a
  * different mesh.
- *
- * <p>Each predicate first evaluates the determinant in plain {@code double} and
+ * <p>
+ * Each predicate first evaluates the determinant in plain {@code double} and
  * compares its magnitude against a conservative forward-error bound (the
  * Shewchuk static "A" filter). When the estimate is comfortably away from zero
  * its sign is provably correct and is returned directly; only when it is too
  * close to zero (the near-degenerate cases) do we fall back to the exact
  * {@link BigDecimal} computation, where {@code new BigDecimal(double)} is the
  * exact value of the {@code double} so the sign is exact for any inputs.
- *
- * <p>The fast path and the exact path compute the <em>same</em> determinant, so
+ * <p>
+ * The fast path and the exact path compute the <em>same</em> determinant, so
  * the returned sign is identical to the always-exact version for every input;
  * the filter only changes how fast we get there. Both paths are validated
  * against the predicate oracle ({@code contract/predicates.txt}).

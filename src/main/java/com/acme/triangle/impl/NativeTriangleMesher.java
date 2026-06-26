@@ -10,12 +10,12 @@ import java.util.List;
 
 /**
  * {@link TriangleMesher} backed by the native Triangle library via JNA.
- *
- * <p>Marshals the input arrays into native memory, calls {@code triangulate()}
+ * <p>
+ * Marshals the input arrays into native memory, calls {@code triangulate()}
  * with switches derived from the input, copies the output mesh back into a
  * {@link TriangleMesherOutput}, and frees the arrays Triangle allocated.
- *
- * <p>Calls are serialized: native Triangle uses process-global state (the exact
+ * <p>
+ * Calls are serialized: native Triangle uses process-global state (the exact
  * arithmetic constants and the random seed), so concurrent triangulation is not
  * safe. Note also that Triangle aborts the process on a fatal input error
  * rather than returning, so callers must supply valid geometry.

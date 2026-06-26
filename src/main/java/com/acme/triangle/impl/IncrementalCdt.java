@@ -17,20 +17,20 @@ import java.util.Set;
  * Steiner points, so refinement need not rebuild the whole mesh from scratch
  * after every point (see the perf roadmap: the from-scratch rebuild makes
  * refinement ~O(N^3)).
- *
- * <p>It is built from an existing {@link ConstrainedDelaunayTriangulator}
+ * <p>
+ * It is built from an existing {@link ConstrainedDelaunayTriangulator}
  * output, whose carved domain is bounded <em>entirely by segments</em> - that is
  * the property that makes interior insertion safe: an interior point's cavity
  * can never escape the domain without first hitting a segment.
- *
- * <p>Interior insertion is constrained Bowyer-Watson: starting from the triangle
+ * <p>
+ * Interior insertion is constrained Bowyer-Watson: starting from the triangle
  * containing the point, gather every triangle whose circumcircle contains it,
  * never crossing a segment; remove that cavity and re-fan it around the new
  * point. The result is locally Delaunay with no global rework. New triangles
  * inherit the cavity's region attribute (the cavity lies within one region,
  * since it does not cross a segment).
- *
- * <p><b>Maintained adjacency (slice 5c-1).</b> Each triangle has a stable integer
+ * <p>
+ * <b>Maintained adjacency (slice 5c-1).</b> Each triangle has a stable integer
  * id (its slot index) and carries its own three neighbour ids; insertion walks
  * the cavity through those links and relinks the new fan locally, so it is
  * O(cavity) instead of rebuilding global adjacency from a {@code HashMap} every
@@ -184,8 +184,8 @@ final class IncrementalCdt {
      * Split segment {@code segIndex} at its midpoint (Ruppert's subsegment
      * split): insert the midpoint as a vertex and replace the segment with its
      * two halves.
-     *
-     * <p>The midpoint is inserted with the same cavity machinery, seeded from the
+     * <p>
+     * The midpoint is inserted with the same cavity machinery, seeded from the
      * triangles incident to the segment (robust - no point-location test on the
      * rounded midpoint). The old segment is dropped from the constraint set
      * first, so the cavity may span both of its sides - an interior
@@ -279,8 +279,8 @@ final class IncrementalCdt {
      * form a degenerate triangle); pass {@code -1L} for none. Each new triangle
      * inherits its source cavity triangle's region attribute, so a cavity that
      * spans two regions attributes correctly.
-     *
-     * <p>The fan is built as {@code {u, w, p}} with the inserted vertex {@code p}
+     * <p>
+     * The fan is built as {@code {u, w, p}} with the inserted vertex {@code p}
      * always at corner 2: the boundary edge {@code (u,w)} is then opposite corner
      * 2 (slot 2 -&gt; the outer-ring neighbour), and the two interior fan edges are
      * {@code (p,u)} at slot 1 and {@code (w,p)} at slot 0. Adjacent fan triangles

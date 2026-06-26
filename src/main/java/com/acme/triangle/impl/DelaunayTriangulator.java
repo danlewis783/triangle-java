@@ -12,16 +12,16 @@ import java.util.Set;
 
 /**
  * Delaunay triangulation of a point set by Bowyer-Watson incremental insertion.
- *
- * <p>Phase 1 of the pure-Java port. Because the consumer needs contract
+ * <p>
+ * Phase 1 of the pure-Java port. Because the consumer needs contract
  * equivalence (a valid Delaunay mesh), not Triangle's exact triangulation, this
  * uses the simplest correct algorithm rather than Triangle's divide-and-conquer:
  * insert each point, delete every triangle whose circumcircle contains it, and
  * fill the resulting cavity by joining the point to the cavity's boundary edges.
  * The robust {@link Predicates} make the incircle and orientation tests exact,
  * so the result is a genuine Delaunay triangulation.
- *
- * <p>Triangles are kept counterclockwise, and the output neighbour list follows
+ * <p>
+ * Triangles are kept counterclockwise, and the output neighbour list follows
  * the convention {@code neighbor[3*i+j]} is the triangle across the edge
  * opposite corner {@code j}. This is the simple, correct version (O(n^2));
  * spatial acceleration can come later, validated by the same oracle.

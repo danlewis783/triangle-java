@@ -2,8 +2,8 @@ package com.acme.triangle;
 
 /**
  * Input to {@link TriangleMesher}: a planar straight-line graph plus options.
- *
- * <p>Plain-data fields (interleaved primitive arrays) so this type is both the
+ * <p>
+ * Plain-data fields (interleaved primitive arrays) so this type is both the
  * natural Java model and a clean marshalling boundary for the native adapter.
  * Coordinate arrays are interleaved {@code x0,y0,x1,y1,...}; index arrays are
  * zero-based into the point list.

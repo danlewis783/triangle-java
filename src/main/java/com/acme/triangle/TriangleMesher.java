@@ -2,8 +2,8 @@ package com.acme.triangle;
 
 /**
  * Facade for two-dimensional quality mesh generation.
- *
- * <p>This is the single type the consumer depends on. Implementations may be a
+ * <p>
+ * This is the single type the consumer depends on. Implementations may be a
  * pure-Java port, a JNA adapter to the native C Triangle library, or a
  * validating/differential decorator over either. They are interchangeable: the
  * contract is a structurally valid constrained-Delaunay quality mesh, not a

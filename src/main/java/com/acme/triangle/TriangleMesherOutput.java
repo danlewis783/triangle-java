@@ -2,8 +2,8 @@ package com.acme.triangle;
 
 /**
  * Output of {@link TriangleMesher}: the generated mesh.
- *
- * <p>Triangles are linear (three corners each). Neighbour slots follow
+ * <p>
+ * Triangles are linear (three corners each). Neighbour slots follow
  * Triangle's convention: {@code neighborList[3*i + j]} is the triangle across
  * the edge OPPOSITE corner {@code j} of triangle {@code i}, or {@code -1} on a
  * boundary. This per-triangle slot alignment is part of the contract; the

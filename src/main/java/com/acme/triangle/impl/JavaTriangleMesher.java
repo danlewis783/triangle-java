@@ -15,8 +15,8 @@ import java.util.PriorityQueue;
  * Pure-Java {@link TriangleMesher}: constrained Delaunay
  * ({@link ConstrainedDelaunayTriangulator}) followed by Ruppert refinement to
  * the requested minimum angle.
- *
- * <p>Refinement (Ruppert's algorithm): while a subsegment is encroached - a
+ * <p>
+ * Refinement (Ruppert's algorithm): while a subsegment is encroached - a
  * vertex lies in its diametral circle - split it at its midpoint; otherwise,
  * while a triangle is below the angle bound, insert its circumcircle centre,
  * unless that centre would encroach a subsegment, in which case split the
@@ -24,8 +24,8 @@ import java.util.PriorityQueue;
  * bad triangles are processed worst-first from a queue keyed by shortest-edge
  * length (Triangle's scheme), re-testing only the triangles a mutation changed
  * rather than rescanning the whole mesh.
- *
- * <p>This honours both the angle bound ({@code minAngleDegrees}) and per-region
+ * <p>
+ * This honours both the angle bound ({@code minAngleDegrees}) and per-region
  * maximum-area constraints (the 4th value of each {@code regionList} entry). A
  * global (non-regional) area bound is not part of the target API. Refinement
  * assumes the input segments do not cross each other (true for quality inputs

@@ -15,8 +15,8 @@ import java.util.Set;
  * - not byte-for-byte identity with any particular triangulator. This is the
  * acceptance bar for any {@link com.acme.triangle.TriangleMesher}
  * implementation: produce <em>a</em> valid mesh meeting these invariants.
- *
- * <p>Invariants:
+ * <p>
+ * Invariants:
  * <ol>
  *   <li>topological validity - manifold mesh, non-degenerate triangles with
  *       consistent orientation, indices in range;</li>
@@ -29,8 +29,8 @@ import java.util.Set;
  *       region attribute is constant across every non-segment interior edge;</li>
  *   <li>quality - minimum triangle angle &ge; the requested bound.</li>
  * </ol>
- *
- * <p>Geometry uses the robust {@link Predicates}, so the checks themselves are
+ * <p>
+ * Geometry uses the robust {@link Predicates}, so the checks themselves are
  * exact. Dual-use: the validating/differential decorators call this at runtime;
  * the tests call it as the acceptance oracle.
  */
