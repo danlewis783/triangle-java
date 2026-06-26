@@ -118,7 +118,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
                triangle index is only valid until the next split/insert. */
             List<Triangle> tris = mesh.trianglesView();
             List<double[]> points = mesh.pointsView();
-            List<int[]> segments = mesh.segmentsView();
+            List<Segment> segments = mesh.segmentsView();
 
             /* Ruppert: clear every encroached subsegment before any bad triangle. */
             int seg = encroachedSubsegment(mesh, points, segments);
@@ -235,9 +235,9 @@ public final class JavaTriangleMesher implements TriangleMesher {
         edge->apex rebuild. */
     private static int encroachedSubsegment(IncrementalCdt mesh,
                                             List<double[]> points,
-                                            List<int[]> segments) {
+                                            List<Segment> segments) {
         for (int s = 0; s < segments.size(); s++) {
-            int a = segments.get(s)[0], b = segments.get(s)[1];
+            int a = segments.get(s).a, b = segments.get(s).b;
             for (int ap : mesh.apexesOfSegment(a, b)) {
                 if (ap >= 0 && inDiametralDisk(points, a, b, points.get(ap))) {
                     return s;
@@ -248,9 +248,9 @@ public final class JavaTriangleMesher implements TriangleMesher {
     }
 
     private static int subsegmentEncroachedBy(double[] p, List<double[]> points,
-                                              List<int[]> segments) {
+                                              List<Segment> segments) {
         for (int s = 0; s < segments.size(); s++) {
-            if (inDiametralDisk(points, segments.get(s)[0], segments.get(s)[1], p)) {
+            if (inDiametralDisk(points, segments.get(s).a, segments.get(s).b, p)) {
                 return s;
             }
         }

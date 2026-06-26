@@ -57,7 +57,7 @@ final class IncrementalCdt {
     private final List<int[]> vseg = new ArrayList<>();       /* {origOrg,origDest} for SEGMENT, else null */
     private final List<Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
     private final boolean haveAttr;                           /* whether triangles carry a region attribute */
-    private final List<int[]> segments = new ArrayList<>();   /* {a,b,marker,origOrg,origDest} */
+    private final List<Segment> segments = new ArrayList<>();
     private final Set<Long> segSet = new HashSet<>();
     /* For each segment edge, one live incident triangle id - so the apexes that
        decide encroachment are an O(1) adjacency hop, not an O(T) edge->apex
@@ -103,7 +103,7 @@ final class IncrementalCdt {
             for (int i = 0; i < base.numberOfSegments; i++) {
                 int a = base.segmentList[2 * i], b = base.segmentList[2 * i + 1];
                 int marker = base.segmentMarkerList != null ? base.segmentMarkerList[i] : 0;
-                segments.add(new int[]{a, b, marker, a, b});   /* original endpoints = a, b */
+                segments.add(new Segment(a, b, marker, a, b));   /* original endpoints = a, b */
                 segSet.add(key(a, b));
             }
         }
@@ -140,8 +140,7 @@ final class IncrementalCdt {
         return tris;
     }
 
-    /** Each entry is {a, b, marker, origOrg, origDest}. */
-    List<int[]> segmentsView() {
+    List<Segment> segmentsView() {
         return segments;
     }
 
@@ -199,8 +198,8 @@ final class IncrementalCdt {
      * @return the new midpoint vertex index
      */
     int splitSegment(int segIndex) {
-        int[] seg = segments.get(segIndex);
-        int a = seg[0], b = seg[1], marker = seg[2], origOrg = seg[3], origDest = seg[4];
+        Segment seg = segments.get(segIndex);
+        int a = seg.a, b = seg.b, marker = seg.marker, origOrg = seg.origOrg, origDest = seg.origDest;
         int[] seeds = incidentTriangles(a, b);
         if (seeds.length == 0) {
             throw new IllegalStateException("segment (" + a + "," + b + ") is not an edge");
@@ -217,8 +216,8 @@ final class IncrementalCdt {
         segTri.remove(key(a, b));
         insertViaCavity(mIdx, seeds, key(a, b));
 
-        segments.set(segIndex, new int[]{a, mIdx, marker, origOrg, origDest});
-        segments.add(new int[]{mIdx, b, marker, origOrg, origDest});
+        segments.set(segIndex, new Segment(a, mIdx, marker, origOrg, origDest));
+        segments.add(new Segment(mIdx, b, marker, origOrg, origDest));
         segSet.add(key(a, mIdx));
         segSet.add(key(mIdx, b));
         /* The halves are new segments incident to mIdx; back each with one of the
@@ -522,10 +521,10 @@ final class IncrementalCdt {
         o.segmentList = new int[2 * segments.size()];
         o.segmentMarkerList = new int[segments.size()];
         for (int i = 0; i < segments.size(); i++) {
-            int[] s = segments.get(i);
-            o.segmentList[2 * i] = s[0];
-            o.segmentList[2 * i + 1] = s[1];
-            o.segmentMarkerList[i] = s[2];
+            Segment s = segments.get(i);
+            o.segmentList[2 * i] = s.a;
+            o.segmentList[2 * i + 1] = s.b;
+            o.segmentMarkerList[i] = s.marker;
         }
         return o;
     }

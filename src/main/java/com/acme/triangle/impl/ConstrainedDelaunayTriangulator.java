@@ -181,9 +181,28 @@ public final class ConstrainedDelaunayTriangulator {
 
     /* --- 3. segment recovery via flips --------------------------------------- */
 
+    /**
+     * A convex edge flip: drop the two triangles in slots {@code triHi}/{@code
+     * triLo} that share edge {@code (u, v)} and replace them with the two
+     * triangles spanning the opposite diagonal {@code (p, q)}. The slots are
+     * ordered larger-first so removing one does not shift the other's index.
+     */
+    private static final class Flip {
+        final int triHi, triLo, u, v, p, q;
+
+        Flip(int triHi, int triLo, int u, int v, int p, int q) {
+            this.triHi = triHi;
+            this.triLo = triLo;
+            this.u = u;
+            this.v = v;
+            this.p = p;
+            this.q = q;
+        }
+    }
+
     private static void insertSegment(double[] pts, List<Corners> tris, int a, int b) {
         while (!isEdge(tris, a, b)) {
-            int[] flip = findFlippableCrossing(pts, tris, a, b);
+            Flip flip = findFlippableCrossing(pts, tris, a, b);
             if (flip == null) {
                 return;                 /* defensive: nothing flippable */
             }
@@ -191,9 +210,8 @@ public final class ConstrainedDelaunayTriangulator {
         }
     }
 
-    /** @return {triHi, triLo, u, v, p, q} for a convex crossing edge, or null. */
-    private static int[] findFlippableCrossing(double[] pts, List<Corners> tris,
-                                               int a, int b) {
+    private static Flip findFlippableCrossing(double[] pts, List<Corners> tris,
+                                              int a, int b) {
         Map<Long, int[]> edge = new HashMap<>();   /* edge -> {tri, oppositeCornerIdx} */
         for (int i = 0; i < tris.size(); i++) {
             Corners t = tris.get(i);
@@ -208,7 +226,7 @@ public final class ConstrainedDelaunayTriangulator {
                     int p = tris.get(t1).corner(prev[1]);
                     int q = t.corner(j);
                     if (cross(pts, u, v, a, b) && convex(pts, u, v, p, q)) {
-                        return new int[]{Math.max(t1, t2), Math.min(t1, t2), u, v, p, q};
+                        return new Flip(Math.max(t1, t2), Math.min(t1, t2), u, v, p, q);
                     }
                 }
             }
@@ -216,12 +234,11 @@ public final class ConstrainedDelaunayTriangulator {
         return null;
     }
 
-    private static void doFlip(double[] pts, List<Corners> tris, int[] f) {
-        tris.remove(f[0]);                 /* remove larger index first */
-        tris.remove(f[1]);
-        int u = f[2], v = f[3], p = f[4], q = f[5];
-        tris.add(ccw(pts, p, v, q));
-        tris.add(ccw(pts, q, u, p));
+    private static void doFlip(double[] pts, List<Corners> tris, Flip f) {
+        tris.remove(f.triHi);              /* remove larger index first */
+        tris.remove(f.triLo);
+        tris.add(ccw(pts, f.p, f.v, f.q));
+        tris.add(ccw(pts, f.q, f.u, f.p));
     }
 
     /* --- 4. constrained Delaunay restoration --------------------------------- */
@@ -249,8 +266,8 @@ public final class ConstrainedDelaunayTriangulator {
                     int p = tris.get(t1).corner(prev[1]);
                     int q = t.corner(j);
                     if (inCircle(pts, tris.get(t1), q) && convex(pts, u, v, p, q)) {
-                        doFlip(pts, tris, new int[]{Math.max(t1, i), Math.min(t1, i),
-                                u, v, p, q});
+                        doFlip(pts, tris, new Flip(Math.max(t1, i), Math.min(t1, i),
+                                u, v, p, q));
                         changed = true;
                     }
                 }
