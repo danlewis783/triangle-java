@@ -313,8 +313,8 @@ public final class JavaTriangleMesher implements TriangleMesher {
             b1 = ic; b2 = ia;
         }
 
-        if (cdt.vertexType(b1) != IncrementalCdt.SEGMENT
-                || cdt.vertexType(b2) != IncrementalCdt.SEGMENT) {
+        if (cdt.vertexType(b1) != IncrementalCdt.VertexType.SEGMENT
+                || cdt.vertexType(b2) != IncrementalCdt.VertexType.SEGMENT) {
             return false;
         }
         int[] s1 = cdt.vertexSeg(b1), s2 = cdt.vertexSeg(b2);

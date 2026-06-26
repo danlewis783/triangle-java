@@ -43,12 +43,17 @@ import java.util.Set;
 final class IncrementalCdt {
 
     /** Vertex provenance, needed by the small-feature refinement rules. */
-    static final int INPUT = 0;     /* an original input vertex (segment joins) */
-    static final int SEGMENT = 1;   /* created by splitting a segment (on its interior) */
-    static final int FREE = 2;      /* an interior Steiner point */
+    enum VertexType {
+        /** An original input vertex (segment joins). */
+        INPUT,
+        /** Created by splitting a segment (on its interior). */
+        SEGMENT,
+        /** An interior Steiner point. */
+        FREE
+    }
 
     private final List<double[]> points = new ArrayList<>();
-    private final List<Integer> vtype = new ArrayList<>();    /* INPUT/SEGMENT/FREE per vertex */
+    private final List<VertexType> vtype = new ArrayList<>();  /* provenance per vertex */
     private final List<int[]> vseg = new ArrayList<>();       /* {origOrg,origDest} for SEGMENT, else null */
     private final List<int[]> tris = new ArrayList<>();       /* CCW {a, b, c}, null if dead */
     private final List<int[]> nbrs = new ArrayList<>();       /* 3 neighbour ids (or -1), parallel to tris */
@@ -77,7 +82,7 @@ final class IncrementalCdt {
     IncrementalCdt(TriangleMesherOutput base) {
         for (int i = 0; i < base.numberOfPoints; i++) {
             points.add(new double[]{base.pointList[2 * i], base.pointList[2 * i + 1]});
-            vtype.add(INPUT);
+            vtype.add(VertexType.INPUT);
             vseg.add(null);
         }
         boolean haveAttr = base.triangleAttributeList != null;
@@ -114,7 +119,7 @@ final class IncrementalCdt {
         }
     }
 
-    int vertexType(int i) {
+    VertexType vertexType(int i) {
         return vtype.get(i);
     }
 
@@ -174,7 +179,7 @@ final class IncrementalCdt {
         }
         int pIdx = points.size();
         points.add(p);
-        vtype.add(FREE);
+        vtype.add(VertexType.FREE);
         vseg.add(null);
         insertViaCavity(pIdx, new int[]{start}, -1L);
         return pIdx;
@@ -206,7 +211,7 @@ final class IncrementalCdt {
         int mIdx = points.size();
         points.add(new double[]{pa[0] + frac * (pb[0] - pa[0]),
                 pa[1] + frac * (pb[1] - pa[1])});
-        vtype.add(SEGMENT);
+        vtype.add(VertexType.SEGMENT);
         vseg.add(new int[]{origOrg, origDest});
 
         segSet.remove(key(a, b));            /* let the cavity span the old segment */
@@ -248,8 +253,8 @@ final class IncrementalCdt {
      * Away from joins, split at the midpoint.
      */
     private double shellSplitFraction(int a, int b) {
-        boolean acuteOrg = vtype.get(a) == INPUT;
-        boolean acuteDest = vtype.get(b) == INPUT;
+        boolean acuteOrg = vtype.get(a) == VertexType.INPUT;
+        boolean acuteDest = vtype.get(b) == VertexType.INPUT;
         if (!acuteOrg && !acuteDest) {
             return 0.5;
         }
