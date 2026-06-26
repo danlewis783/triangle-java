@@ -1,7 +1,6 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesherOutput;
-import com.acme.triangle.predicate.Predicates;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -16,8 +15,8 @@ import java.util.Set;
  * uses the simplest correct algorithm rather than Triangle's divide-and-conquer:
  * insert each point, delete every triangle whose circumcircle contains it, and
  * fill the resulting cavity by joining the point to the cavity's boundary edges.
- * The robust {@link Predicates} make the incircle and orientation tests exact,
- * so the result is a genuine Delaunay triangulation.
+ * The robust {@link Geometry} predicates make the incircle and orientation
+ * tests exact, so the result is a genuine Delaunay triangulation.
  * <p>
  * Triangles are kept counterclockwise, and the output neighbour list follows
  * the convention {@code neighbor[3*i+j]} is the triangle across the edge
@@ -65,7 +64,7 @@ public final class DelaunayTriangulator {
         List<Corners> survivors = new ArrayList<>();
         List<Corners> cavity = new ArrayList<>();
         for (Corners t : triangles) {
-            if (inCircumcircle(pts, t, p)) {
+            if (Geometry.inCircle(pts, t, p)) {
                 cavity.add(t);
             } else {
                 survivors.add(t);
@@ -94,7 +93,7 @@ public final class DelaunayTriangulator {
         if (cavityEdges.contains(directed(b, a))) {
             return;                                 /* interior cavity edge */
         }
-        int s = orient(pts, a, b, p);
+        int s = Geometry.orient2d(pts, a, b, p);
         if (s > 0) {
             out.add(new Corners(a, b, p));
         } else if (s < 0) {
@@ -142,20 +141,7 @@ public final class DelaunayTriangulator {
     }
 
     private static Corners ccw(double[] pts, int a, int b, int c) {
-        return orient(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
-    }
-
-    private static int orient(double[] pts, int a, int b, int c) {
-        return Predicates.orient2d(pts[2 * a], pts[2 * a + 1],
-                pts[2 * b], pts[2 * b + 1], pts[2 * c], pts[2 * c + 1]);
-    }
-
-    private static boolean inCircumcircle(double[] pts, Corners t, int p) {
-        return Predicates.incircle(
-                pts[2 * t.a], pts[2 * t.a + 1],
-                pts[2 * t.b], pts[2 * t.b + 1],
-                pts[2 * t.c], pts[2 * t.c + 1],
-                pts[2 * p], pts[2 * p + 1]) > 0;
+        return Geometry.orient2d(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
     }
 
     private static long directed(int a, int b) {

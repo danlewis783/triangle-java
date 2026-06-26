@@ -265,7 +265,7 @@ public final class ConstrainedDelaunayTriangulator {
                     int t1 = prev[0];
                     int p = tris.get(t1).corner(prev[1]);
                     int q = t.corner(j);
-                    if (inCircle(pts, tris.get(t1), q) && convex(pts, u, v, p, q)) {
+                    if (Geometry.inCircle(pts, tris.get(t1), q) && convex(pts, u, v, p, q)) {
                         doFlip(pts, tris, new Flip(Math.max(t1, i), Math.min(t1, i),
                                 u, v, p, q));
                         changed = true;
@@ -373,9 +373,9 @@ public final class ConstrainedDelaunayTriangulator {
     private static int locate(double[] pts, List<Corners> tris, double x, double y) {
         for (int i = 0; i < tris.size(); i++) {
             Corners t = tris.get(i);
-            int s1 = orientXY(pts, t.a, t.b, x, y);
-            int s2 = orientXY(pts, t.b, t.c, x, y);
-            int s3 = orientXY(pts, t.c, t.a, x, y);
+            int s1 = Geometry.orient2d(pts, t.a, t.b, x, y);
+            int s2 = Geometry.orient2d(pts, t.b, t.c, x, y);
+            int s3 = Geometry.orient2d(pts, t.c, t.a, x, y);
             boolean nonNeg = s1 >= 0 && s2 >= 0 && s3 >= 0;
             boolean nonPos = s1 <= 0 && s2 <= 0 && s3 <= 0;
             if ((nonNeg || nonPos) && !(s1 == 0 && s2 == 0 && s3 == 0)) {
@@ -452,8 +452,8 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     private static boolean cross(double[] pts, int u, int v, int a, int b) {
-        int d1 = orient(pts, a, b, u), d2 = orient(pts, a, b, v);
-        int d3 = orient(pts, u, v, a), d4 = orient(pts, u, v, b);
+        int d1 = Geometry.orient2d(pts, a, b, u), d2 = Geometry.orient2d(pts, a, b, v);
+        int d3 = Geometry.orient2d(pts, u, v, a), d4 = Geometry.orient2d(pts, u, v, b);
         return d1 * d2 < 0 && d3 * d4 < 0;
     }
 
@@ -464,32 +464,20 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     private static boolean convex(double[] pts, int u, int v, int p, int q) {
-        return orient(pts, p, q, u) * orient(pts, p, q, v) < 0;
+        return Geometry.orient2d(pts, p, q, u) * Geometry.orient2d(pts, p, q, v) < 0;
     }
 
     private static Corners ccw(double[] pts, int a, int b, int c) {
-        return orient(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
+        return Geometry.orient2d(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
     }
 
-    private static boolean inCircle(double[] pts, Corners t, int p) {
-        return Predicates.incircle(
-                pts[2 * t.a], pts[2 * t.a + 1], pts[2 * t.b], pts[2 * t.b + 1],
-                pts[2 * t.c], pts[2 * t.c + 1], pts[2 * p], pts[2 * p + 1]) > 0;
-    }
-
-    private static int orient(double[] pts, int a, int b, int c) {
-        return Predicates.orient2d(pts[2 * a], pts[2 * a + 1], pts[2 * b],
-                pts[2 * b + 1], pts[2 * c], pts[2 * c + 1]);
-    }
-
+    /** Orientation of (a, b, c) over the pre-flatten point list - intersection
+        splitting works on a growing {@code List} before coordinates are flattened
+        into the {@code double[]} the rest of the pipeline (and {@link Geometry})
+        addresses. */
     private static int orient(List<double[]> pts, int a, int b, int c) {
         return Predicates.orient2d(pts.get(a)[0], pts.get(a)[1], pts.get(b)[0],
                 pts.get(b)[1], pts.get(c)[0], pts.get(c)[1]);
-    }
-
-    private static int orientXY(double[] pts, int a, int b, double x, double y) {
-        return Predicates.orient2d(pts[2 * a], pts[2 * a + 1], pts[2 * b],
-                pts[2 * b + 1], x, y);
     }
 
     private static long key(int a, int b) {
