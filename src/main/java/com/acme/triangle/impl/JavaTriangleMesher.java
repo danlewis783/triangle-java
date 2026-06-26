@@ -37,13 +37,19 @@ public final class JavaTriangleMesher implements TriangleMesher {
         new triangles clear the threshold rather than sitting exactly on it. */
     private static final double OFF_CENTRE_MARGIN_DEG = 1.0;
 
-    /** Convergence backstop: cap the vertex count at this multiple of the input
-        size (or {@link #MIN_VERTEX_CAP}, whichever is larger). Off-centres make
-        achievable bounds converge well under this; the cap turns a bound no
-        Ruppert variant can satisfy (e.g. a high angle on a fine-featured input)
-        into a fast, typed failure instead of an unbounded loop. */
+    /** Non-termination backstop: cap the vertex count at this multiple of the
+        input size (or {@link #MIN_VERTEX_CAP}, whichever is larger). Native
+        Triangle has no such count cap - it refines until either quality is met or
+        a split point rounds onto an existing vertex (a precision error that aborts
+        the process). We lack that precision-exhaustion path and are a simpler
+        Ruppert/Üngör variant with no termination guarantee above ~20.7°, so a cap
+        turns a genuinely non-terminating refinement into a fast, typed failure
+        instead of an unbounded loop. It is sized to only catch real runaway, not
+        to reject a feasible-but-large mesh: a high angle bound on a fine-featured
+        input can legitimately need tens of thousands of vertices (e.g. one captured
+        q=33 case native meshes with ~41k triangles ≈ 20k vertices). */
     private static final int MAX_VERTEX_FACTOR = 50;
-    private static final int MIN_VERTEX_CAP = 10_000;
+    private static final int MIN_VERTEX_CAP = 100_000;
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {

@@ -245,10 +245,17 @@ for *if a future input demands it*, roughly in order of likely payoff.
   `locate` (point-in-domain for an interior insertion) and `incidentTriangles`
   (segment-split seeds) are still linear scans, and `splitSegment` uses the latter.
   They are not in the per-iteration hot path the way the old rescans were, but on
-  much larger inputs they would resurface. `locate` could be seeded from the bad
+  much larger meshes they resurface — **measured:** the captured
+  `rect-3x4-poly-30gon-inner` case (a 3×4 rectangle around an inscribed 30-gon at
+  q=33) meshes to ~36.7k triangles (≈ 18k vertices, *below* native's 41.2k) but
+  takes ~25 s, almost all of it in these O(T) scans (each of ~18k insertions does
+  an O(T) `locate`). This is the case that motivated raising the convergence cap
+  (`MIN_VERTEX_CAP` 10k → 100k) so a feasible-but-large mesh is not rejected; see
+  the cap note in `JavaTriangleMesher`. `locate` could be seeded from the bad
   triangle whose off-centre is being inserted (it is adjacent); `incidentTriangles`
-  could use the new `segTri` index (segment edge → one incident triangle, plus an
-  adjacency hop for the other) and drop the scan entirely.
+  could use the `segTri` index (segment edge → one incident triangle, plus an
+  adjacency hop for the other) and drop the scan entirely. This is now the largest
+  remaining speed lever, but only on these few very heavy inputs.
 - **A real encroached-subsegment queue.** If an input has S large enough that the
   O(S)-per-iteration scan dominates, replace it with the dirty-set-fed queue
   described in §3.3. Low priority until a benchmark shows S mattering.

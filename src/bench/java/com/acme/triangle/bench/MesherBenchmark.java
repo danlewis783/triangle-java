@@ -1,8 +1,8 @@
 package com.acme.triangle.bench;
 
+import com.acme.triangle.MeshContractException;
 import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
-import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.TriangleMeshers;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -133,8 +133,18 @@ public final class MesherBenchmark {
 
     private static void row(TriangleMesher java, TriangleMesher nat,
                             String label, TriangleMesherInput in, int reps) {
-        TriangleMesherOutput javaSample = java.mesh(in);
-        int triangles = javaSample.numberOfTriangles;
+        int triangles;
+        try {
+            triangles = java.mesh(in).numberOfTriangles;
+        } catch (MeshContractException e) {
+            /* The Java mesher's vertex-cap backstop fired - an aggressive bound it
+               could not reach on this input. Report (with native's count for
+               contrast) and keep benchmarking the rest instead of aborting. */
+            System.out.printf("%-24s %8d %8s %8d %4.0f   java did not converge: %s%n",
+                    truncate(label, 24), in.numberOfPoints, "-",
+                    nat.mesh(in).numberOfTriangles, in.minAngleDegrees, e.getMessage());
+            return;
+        }
         int nativeTriangles = nat.mesh(in).numberOfTriangles;
 
         for (int i = 0; i < 2; i++) {                 /* warm-up / JIT */
