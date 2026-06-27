@@ -53,40 +53,35 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        if (!needsRefinement(input)) {
-            return ConstrainedDelaunayTriangulator.triangulate(input);
+        TriangleMesherInput2 in = TriangleMesherInput2.from(input);
+        if (!needsRefinement(in)) {
+            return ConstrainedDelaunayTriangulator.triangulate(in);
         }
-        return refine(input);
+        return refine(in);
     }
 
-    private static boolean needsRefinement(TriangleMesherInput input) {
+    private static boolean needsRefinement(TriangleMesherInput2 input) {
         if (input.minAngleDegrees > 0) {
             return true;
         }
-        if (input.regionList != null) {
-            for (int r = 0; r < input.numberOfRegions; r++) {
-                if (input.regionList[4 * r + 3] > 0) {        /* a region max area */
-                    return true;
-                }
+        for (Region r : input.regions) {
+            if (r.maxArea > 0) {                               /* a region max area */
+                return true;
             }
         }
         return false;
     }
 
-    private TriangleMesherOutput refine(TriangleMesherInput input) {
+    private TriangleMesherOutput refine(TriangleMesherInput2 input) {
         double bound = input.minAngleDegrees;
         /* Below-bound test uses squared cosine vs cos^2(bound) - no trig per
            triangle (Triangle does the same, triangle.c:4036). */
         double cosBound = Math.cos(Math.toRadians(bound));
         double cosSqBound = cosBound * cosBound;
         Map<Double, Double> maxAreaByAttr = new HashMap<>();
-        if (input.regionList != null) {
-            for (int r = 0; r < input.numberOfRegions; r++) {
-                double attr = input.regionList[4 * r + 2];
-                double maxArea = input.regionList[4 * r + 3];
-                if (maxArea > 0) {
-                    maxAreaByAttr.put(attr, maxArea);
-                }
+        for (Region r : input.regions) {
+            if (r.maxArea > 0) {
+                maxAreaByAttr.put(r.attribute, r.maxArea);
             }
         }
 
@@ -110,7 +105,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
             }
         }
 
-        int maxVertices = Math.max(input.numberOfPoints * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
+        int maxVertices = Math.max(input.points.size() * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
         while (true) {
             /* Live views, re-fetched each iteration: with maintained adjacency
                these are stable lists mutated in place (dead triangles appear as

@@ -1,7 +1,6 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.predicate.Predicates;
-import java.util.List;
 
 /**
  * The single front door to the robust {@link Predicates}: every orientation and
@@ -40,15 +39,13 @@ final class Geometry {
                 pts[2 * d], pts[2 * d + 1]) > 0;
     }
 
-    /* --- pre-flatten List<double[]> (intersection splitting) ----------------- */
+    /* --- Points (refinement kernel and the construction working set) --------- */
 
-    /** Orientation of vertices (a, b, c) over the not-yet-flattened point list. */
-    static int orient2d(List<double[]> pts, int a, int b, int c) {
-        return Predicates.orient2d(pts.get(a)[0], pts.get(a)[1],
-                pts.get(b)[0], pts.get(b)[1], pts.get(c)[0], pts.get(c)[1]);
+    /** Orientation of vertices (a, b, c): &gt;0 CCW, &lt;0 CW, 0 collinear. */
+    static int orient2d(Points points, int a, int b, int c) {
+        return Predicates.orient2d(points.x(a), points.y(a),
+                points.x(b), points.y(b), points.x(c), points.y(c));
     }
-
-    /* --- Points (refinement kernel) ----------------------------------------- */
 
     /** Orientation of directed edge (a, b) against the loose point (x, y). */
     static int orient2d(Points points, int a, int b, double x, double y) {

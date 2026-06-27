@@ -35,6 +35,10 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     public static TriangleMesherOutput triangulate(TriangleMesherInput in) {
+        return triangulate(TriangleMesherInput2.from(in));
+    }
+
+    static TriangleMesherOutput triangulate(TriangleMesherInput2 in) {
         /* 1. Split crossing segments. */
         Pslg pslg = splitIntersections(in);
         double[] pts = pslg.points;
@@ -54,11 +58,10 @@ public final class ConstrainedDelaunayTriangulator {
         restoreDelaunay(pts, tris, segSet);
 
         /* 5. Carve holes and concavities. */
-        boolean[] removed = carve(pts, tris, segSet, in.holeList, in.numberOfHoles);
+        boolean[] removed = carve(pts, tris, segSet, in.holes);
 
         /* 6. Attribute regions. */
-        double[] attr = attributeRegions(pts, tris, removed, segSet,
-                in.regionList, in.numberOfRegions);
+        double[] attr = attributeRegions(pts, tris, removed, segSet, in.regions);
 
         return buildOutput(pts, np, tris, removed, attr, pslg);
     }
@@ -89,19 +92,11 @@ public final class ConstrainedDelaunayTriangulator {
         }
     }
 
-    private static Pslg splitIntersections(TriangleMesherInput in) {
-        List<double[]> pts = new ArrayList<>();
-        for (int i = 0; i < in.numberOfPoints; i++) {
-            pts.add(new double[]{in.pointList[2 * i], in.pointList[2 * i + 1]});
-        }
-        List<Constraint> segs = new ArrayList<>();
-        int[] segList = in.segmentList, segMarkers = in.segmentMarkerList;
-        if (segList != null) {
-            for (int i = 0; i < in.numberOfSegments; i++) {
-                int marker = segMarkers != null ? segMarkers[i] : 0;
-                segs.add(new Constraint(segList[2 * i], segList[2 * i + 1], marker));
-            }
-        }
+    private static Pslg splitIntersections(TriangleMesherInput2 in) {
+        /* Growable working copy: intersection points are appended as crossings
+           are resolved (the input store must not be mutated). */
+        Points pts = new Points(in.points.toArray(), in.points.size());
+        List<Constraint> segs = new ArrayList<>(in.segments);
 
         boolean changed = true;
         while (changed) {
@@ -116,9 +111,7 @@ public final class ConstrainedDelaunayTriangulator {
                         continue;
                     }
                     if (cross(pts, a.a, a.b, b.a, b.b)) {
-                        double[] x = intersection(pts, a.a, a.b, b.a, b.b);
-                        int c = pts.size();
-                        pts.add(x);
+                        int c = pts.add(intersection(pts, a.a, a.b, b.a, b.b));
                         segs.set(i, new Constraint(a.a, c, a.marker));
                         segs.set(j, new Constraint(b.a, c, b.marker));
                         segs.add(new Constraint(c, a.b, a.marker));
@@ -149,13 +142,7 @@ public final class ConstrainedDelaunayTriangulator {
             }
         }
 
-        int numPoints = pts.size();
-        double[] flatPts = new double[numPoints * 2];
-        for (int i = 0; i < numPoints; i++) {
-            flatPts[2 * i] = pts.get(i)[0];
-            flatPts[2 * i + 1] = pts.get(i)[1];
-        }
-        return new Pslg(flatPts, numPoints, segs, in.numberOfRegions > 0);
+        return new Pslg(pts.toArray(), pts.size(), segs, !in.regions.isEmpty());
     }
 
     private static boolean share(Constraint a, Constraint b) {
@@ -163,25 +150,25 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     /** True if vertex v is exactly collinear with (a,b) and strictly between them. */
-    private static boolean onSegmentInterior(List<double[]> pts, int a, int b, int v) {
+    private static boolean onSegmentInterior(Points pts, int a, int b, int v) {
         if (orient(pts, a, b, v) != 0) {
             return false;
         }
-        double[] pa = pts.get(a), pb = pts.get(b), pv = pts.get(v);
-        double toA = (pv[0] - pa[0]) * (pb[0] - pa[0]) + (pv[1] - pa[1]) * (pb[1] - pa[1]);
-        double toB = (pv[0] - pb[0]) * (pa[0] - pb[0]) + (pv[1] - pb[1]) * (pa[1] - pb[1]);
+        double pax = pts.x(a), pay = pts.y(a), pbx = pts.x(b), pby = pts.y(b);
+        double pvx = pts.x(v), pvy = pts.y(v);
+        double toA = (pvx - pax) * (pbx - pax) + (pvy - pay) * (pby - pay);
+        double toB = (pvx - pbx) * (pax - pbx) + (pvy - pby) * (pay - pby);
         return toA > 0 && toB > 0;            /* strictly inside, not at an endpoint */
     }
 
-    private static double[] intersection(List<double[]> pts, int p0, int p1,
-                                         int q0, int q1) {
-        double x1 = pts.get(p0)[0], y1 = pts.get(p0)[1];
-        double x2 = pts.get(p1)[0], y2 = pts.get(p1)[1];
-        double x3 = pts.get(q0)[0], y3 = pts.get(q0)[1];
-        double x4 = pts.get(q1)[0], y4 = pts.get(q1)[1];
+    private static Point intersection(Points pts, int p0, int p1, int q0, int q1) {
+        double x1 = pts.x(p0), y1 = pts.y(p0);
+        double x2 = pts.x(p1), y2 = pts.y(p1);
+        double x3 = pts.x(q0), y3 = pts.y(q0);
+        double x4 = pts.x(q1), y4 = pts.y(q1);
         double den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
         double t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
-        return new double[]{x1 + t * (x2 - x1), y1 + t * (y2 - y1)};
+        return new Point(x1 + t * (x2 - x1), y1 + t * (y2 - y1));
     }
 
     /* --- 3. segment recovery via flips --------------------------------------- */
@@ -289,7 +276,7 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     private static boolean[] carve(double[] pts, List<Corners> tris, Set<Long> segSet,
-                                   double @Nullable [] holes, int numHoles) {
+                                   List<Point> holes) {
         int n = tris.size();
         int[] neigh = adjacency(tris);
         boolean[] removed = new boolean[n];
@@ -308,13 +295,11 @@ public final class ConstrainedDelaunayTriangulator {
             }
         }
         /* Seed: triangle containing each hole point. */
-        if (holes != null) {
-            for (int h = 0; h < numHoles; h++) {
-                int t = locate(pts, tris, holes[2 * h], holes[2 * h + 1]);
-                if (t >= 0 && !removed[t]) {
-                    removed[t] = true;
-                    queue.add(t);
-                }
+        for (Point h : holes) {
+            int t = locate(pts, tris, h.x, h.y);
+            if (t >= 0 && !removed[t]) {
+                removed[t] = true;
+                queue.add(t);
             }
         }
         flood(tris, neigh, segSet, removed, queue);
@@ -323,17 +308,15 @@ public final class ConstrainedDelaunayTriangulator {
 
     private static double @Nullable [] attributeRegions(double[] pts, List<Corners> tris,
                                              boolean[] removed, Set<Long> segSet,
-                                             double @Nullable [] regions, int numRegions) {
-        if (numRegions == 0 || regions == null) {
+                                             List<Region> regions) {
+        if (regions.isEmpty()) {
             return null;
         }
         int n = tris.size();
         int[] neigh = adjacency(tris);
         double[] attr = new double[n];
-        for (int r = 0; r < numRegions; r++) {
-            double rx = regions[4 * r], ry = regions[4 * r + 1];
-            double rattr = regions[4 * r + 2];
-            int start = locate(pts, tris, rx, ry);
+        for (Region region : regions) {
+            int start = locate(pts, tris, region.site.x, region.site.y);
             if (start < 0 || removed[start]) {
                 continue;
             }
@@ -343,7 +326,7 @@ public final class ConstrainedDelaunayTriangulator {
             queue.add(start);
             while (!queue.isEmpty()) {
                 int t = queue.poll();
-                attr[t] = rattr;
+                attr[t] = region.attribute;
                 Corners tc = tris.get(t);
                 for (int j = 0; j < 3; j++) {
                     int nb = neigh[3 * t + j];
@@ -464,7 +447,7 @@ public final class ConstrainedDelaunayTriangulator {
         return d1 * d2 < 0 && d3 * d4 < 0;
     }
 
-    private static boolean cross(List<double[]> pts, int u, int v, int a, int b) {
+    private static boolean cross(Points pts, int u, int v, int a, int b) {
         int d1 = orient(pts, a, b, u), d2 = orient(pts, a, b, v);
         int d3 = orient(pts, u, v, a), d4 = orient(pts, u, v, b);
         return d1 * d2 < 0 && d3 * d4 < 0;
@@ -478,11 +461,10 @@ public final class ConstrainedDelaunayTriangulator {
         return Geometry.orient2d(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
     }
 
-    /** Orientation of (a, b, c) over the pre-flatten point list - intersection
-        splitting works on a growing {@code List} before coordinates are flattened
-        into the {@code double[]} the rest of the pipeline (and {@link Geometry})
-        addresses. */
-    private static int orient(List<double[]> pts, int a, int b, int c) {
+    /** Orientation of (a, b, c) over the growable working {@link Points} -
+        intersection splitting appends points before the set is flattened into the
+        {@code double[]} the rest of the pipeline addresses. */
+    private static int orient(Points pts, int a, int b, int c) {
         return Geometry.orient2d(pts, a, b, c);
     }
 
