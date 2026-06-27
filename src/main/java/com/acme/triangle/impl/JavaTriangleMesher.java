@@ -103,7 +103,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
            go stale - their slot freed or reused - so revalidate on dequeue. */
         PriorityQueue<BadTri> bad =
                 new PriorityQueue<>(Comparator.comparingDouble(e -> e.key));
-        List<int[]> seed = mesh.trianglesView();
+        List<Triangle> seed = mesh.trianglesView();
         for (int id = 0; id < seed.size(); id++) {
             if (seed.get(id) != null) {
                 enqueueIfBad(bad, mesh, id, cosSqBound, maxAreaByAttr);
@@ -116,9 +116,9 @@ public final class JavaTriangleMesher implements TriangleMesher {
                these are stable lists mutated in place (dead triangles appear as
                null, so the scans skip them). A mutation may free/reuse slots, so a
                triangle index is only valid until the next split/insert. */
-            List<int[]> tris = mesh.trianglesView();
-            List<double[]> points = mesh.pointsView();
-            List<int[]> segments = mesh.segmentsView();
+            List<Triangle> tris = mesh.trianglesView();
+            Points points = mesh.pointsView();
+            List<Segment> segments = mesh.segmentsView();
 
             /* Ruppert: clear every encroached subsegment before any bad triangle. */
             int seg = encroachedSubsegment(mesh, points, segments);
@@ -130,7 +130,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
                 if (t < 0) {
                     return mesh.toOutput();        /* quality achieved: build output once */
                 }
-                double[] centre = offCentre(tris, points, t, bound);
+                Point centre = offCentre(tris, points, t, bound);
                 int encroached = subsegmentEncroachedBy(centre, points, segments);
                 if (encroached >= 0) {
                     mesh.splitSegment(encroached);
@@ -174,17 +174,16 @@ public final class JavaTriangleMesher implements TriangleMesher {
     private static void enqueueIfBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
                                      int id, double cosSqBound,
                                      Map<Double, Double> maxAreaByAttr) {
-        int[] tc = mesh.trianglesView().get(id);
+        Triangle tc = mesh.trianglesView().get(id);
         if (tc == null) {
             return;
         }
-        List<double[]> points = mesh.pointsView();
-        List<Double> attrs = mesh.attrsView();
-        int ia = tc[0], ib = tc[1], ic = tc[2];
-        double[] a = points.get(ia), b = points.get(ib), c = points.get(ic);
+        Points points = mesh.pointsView();
+        int ia = tc.a, ib = tc.b, ic = tc.c;
+        Point a = points.at(ia), b = points.at(ib), c = points.at(ic);
         boolean isBad = false;
-        if (!maxAreaByAttr.isEmpty() && attrs != null) {
-            Double maxArea = maxAreaByAttr.get(attrs.get(id));
+        if (!maxAreaByAttr.isEmpty() && mesh.hasAttributes()) {
+            Double maxArea = maxAreaByAttr.get(tc.attr);
             isBad = maxArea != null && triangleArea(a, b, c) > maxArea;
         }
         if (!isBad) {
@@ -211,10 +210,10 @@ public final class JavaTriangleMesher implements TriangleMesher {
         stale entries (slot freed, or reused for a different triangle). A surviving
         triangle's corners are unchanged, so it is still bad - no re-test needed. */
     private static int dequeueValidBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh) {
-        List<int[]> tris = mesh.trianglesView();
+        List<Triangle> tris = mesh.trianglesView();
         while (!bad.isEmpty()) {
             BadTri e = bad.poll();
-            int[] cur = tris.get(e.id);
+            Triangle cur = tris.get(e.id);
             if (cur != null && sameCorners(cur, e.a, e.b, e.c)) {
                 return e.id;
             }
@@ -224,10 +223,10 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
     /** Whether {@code tc} has exactly the corner set {a, b, c} (the corners are
         distinct, so containment in both directions reduces to this). */
-    private static boolean sameCorners(int[] tc, int a, int b, int c) {
-        return (tc[0] == a || tc[1] == a || tc[2] == a)
-                && (tc[0] == b || tc[1] == b || tc[2] == b)
-                && (tc[0] == c || tc[1] == c || tc[2] == c);
+    private static boolean sameCorners(Triangle tc, int a, int b, int c) {
+        return (tc.a == a || tc.b == a || tc.c == a)
+                && (tc.a == b || tc.b == b || tc.c == b)
+                && (tc.a == c || tc.b == c || tc.c == c);
     }
 
     /** First subsegment with an adjacent triangle apex inside its diametral disk.
@@ -235,12 +234,12 @@ public final class JavaTriangleMesher implements TriangleMesher {
         O(1) adjacency hop apiece - so the scan is O(S) with no per-iteration
         edge->apex rebuild. */
     private static int encroachedSubsegment(IncrementalCdt mesh,
-                                            List<double[]> points,
-                                            List<int[]> segments) {
+                                            Points points,
+                                            List<Segment> segments) {
         for (int s = 0; s < segments.size(); s++) {
-            int a = segments.get(s)[0], b = segments.get(s)[1];
+            int a = segments.get(s).a, b = segments.get(s).b;
             for (int ap : mesh.apexesOfSegment(a, b)) {
-                if (ap >= 0 && inDiametralDisk(points, a, b, points.get(ap))) {
+                if (ap >= 0 && inDiametralDisk(points, a, b, points.at(ap))) {
                     return s;
                 }
             }
@@ -248,10 +247,10 @@ public final class JavaTriangleMesher implements TriangleMesher {
         return -1;
     }
 
-    private static int subsegmentEncroachedBy(double[] p, List<double[]> points,
-                                              List<int[]> segments) {
+    private static int subsegmentEncroachedBy(Point p, Points points,
+                                              List<Segment> segments) {
         for (int s = 0; s < segments.size(); s++) {
-            if (inDiametralDisk(points, segments.get(s)[0], segments.get(s)[1], p)) {
+            if (inDiametralDisk(points, segments.get(s).a, segments.get(s).b, p)) {
                 return s;
             }
         }
@@ -265,11 +264,11 @@ public final class JavaTriangleMesher implements TriangleMesher {
      * (triangle.c:4036). The smallest angle is opposite the shortest edge and is
      * always acute, so the squared comparison is exact in sign.
      */
-    private static boolean belowAngleBound(double[] a, double[] b, double[] c,
+    private static boolean belowAngleBound(Point a, Point b, Point c,
                                            double cosSqBound) {
-        double dxod = b[0] - a[0], dyod = b[1] - a[1];
-        double dxda = c[0] - b[0], dyda = c[1] - b[1];
-        double dxao = c[0] - a[0], dyao = c[1] - a[1];
+        double dxod = b.x - a.x, dyod = b.y - a.y;
+        double dxda = c.x - b.x, dyda = c.y - b.y;
+        double dxao = c.x - a.x, dyao = c.y - a.y;
         double apexlen = dxod * dxod + dyod * dyod;        /* |a-b|^2, opposite c */
         double orglen = dxda * dxda + dyda * dyda;          /* |b-c|^2, opposite a */
         double destlen = dxao * dxao + dyao * dyao;         /* |a-c|^2, opposite b */
@@ -299,11 +298,11 @@ public final class JavaTriangleMesher implements TriangleMesher {
      * concentric-shell segment splitting in {@link IncrementalCdt} is what makes
      * the endpoints land equidistant so this rule can recognize them.
      */
-    private static boolean unsplittable(IncrementalCdt cdt, List<double[]> points,
+    private static boolean unsplittable(IncrementalCdt cdt, Points points,
                                         int ia, int ib, int ic) {
-        double ab = dist2(points.get(ia), points.get(ib));
-        double bc = dist2(points.get(ib), points.get(ic));
-        double ca = dist2(points.get(ic), points.get(ia));
+        double ab = dist2(points, ia, ib);
+        double bc = dist2(points, ib, ic);
+        double ca = dist2(points, ic, ia);
         int b1, b2;                                         /* shortest-edge endpoints */
         if (ab <= bc && ab <= ca) {
             b1 = ia; b2 = ib;
@@ -313,40 +312,36 @@ public final class JavaTriangleMesher implements TriangleMesher {
             b1 = ic; b2 = ia;
         }
 
-        if (cdt.vertexType(b1) != IncrementalCdt.SEGMENT
-                || cdt.vertexType(b2) != IncrementalCdt.SEGMENT) {
+        Provenance p1 = cdt.provenance(b1), p2 = cdt.provenance(b2);
+        if (p1.type != VertexType.SEGMENT || p2.type != VertexType.SEGMENT) {
             return false;
         }
-        int[] s1 = cdt.vertexSeg(b1), s2 = cdt.vertexSeg(b2);
-        if (s1 == null || s2 == null) {
-            return false;
-        }
-        if ((s1[0] == s2[0] && s1[1] == s2[1]) || (s1[0] == s2[1] && s1[1] == s2[0])) {
+        if ((p1.origOrg == p2.origOrg && p1.origDest == p2.origDest)
+                || (p1.origOrg == p2.origDest && p1.origDest == p2.origOrg)) {
             return false;                          /* same input segment: split normally */
         }
         int join = -1;
-        if (s1[0] == s2[0] || s1[0] == s2[1]) {
-            join = s1[0];
-        } else if (s1[1] == s2[0] || s1[1] == s2[1]) {
-            join = s1[1];
+        if (p1.origOrg == p2.origOrg || p1.origOrg == p2.origDest) {
+            join = p1.origOrg;
+        } else if (p1.origDest == p2.origOrg || p1.origDest == p2.origDest) {
+            join = p1.origDest;
         }
         if (join < 0) {
             return false;                          /* the two segments do not meet */
         }
-        double d1 = dist2(points.get(b1), points.get(join));
-        double d2 = dist2(points.get(b2), points.get(join));
+        double d1 = dist2(points, b1, join);
+        double d2 = dist2(points, b2, join);
         return d1 < 1.001 * d2 && d1 > 0.999 * d2;
     }
 
-    private static double triangleArea(double[] a, double[] b, double[] c) {
-        return Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+    private static double triangleArea(Point a, Point b, Point c) {
+        return Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x))
                 / 2.0;
     }
 
-    private static boolean inDiametralDisk(List<double[]> points, int a, int b,
-                                           double[] p) {
-        double[] pa = points.get(a), pb = points.get(b);
-        double dot = (p[0] - pa[0]) * (p[0] - pb[0]) + (p[1] - pa[1]) * (p[1] - pb[1]);
+    private static boolean inDiametralDisk(Points points, int a, int b, Point p) {
+        double pax = points.x(a), pay = points.y(a), pbx = points.x(b), pby = points.y(b);
+        double dot = (p.x - pax) * (p.x - pbx) + (p.y - pay) * (p.y - pby);
         return dot < 0;                             /* angle a-p-b obtuse */
     }
 
@@ -359,12 +354,12 @@ public final class JavaTriangleMesher implements TriangleMesher {
      * is numerically unreliable for skinny triangles). Aims a small margin above
      * the bound so the new triangle is not re-selected at exactly the threshold.
      */
-    private static double[] offCentre(List<int[]> tris, List<double[]> points,
-                                      int t, double boundDegrees) {
-        int[] tc = tris.get(t);
-        double[] a = points.get(tc[0]), b = points.get(tc[1]), c = points.get(tc[2]);
+    private static Point offCentre(List<Triangle> tris, Points points,
+                                   int t, double boundDegrees) {
+        Triangle tc = tris.get(t);
+        Point a = points.at(tc.a), b = points.at(tc.b), c = points.at(tc.c);
 
-        double[] p, q, r;                          /* p,q = shortest edge; r = apex */
+        Point p, q, r;                             /* p,q = shortest edge; r = apex */
         double ab = dist2(a, b), bc = dist2(b, c), ca = dist2(c, a);
         if (ab <= bc && ab <= ca) {
             p = a; q = b; r = c;
@@ -375,15 +370,15 @@ public final class JavaTriangleMesher implements TriangleMesher {
         }
 
         double e = Math.sqrt(dist2(p, q));
-        double mx = (p[0] + q[0]) / 2.0, my = (p[1] + q[1]) / 2.0;
-        double nx = -(q[1] - p[1]), ny = q[0] - p[0];   /* perpendicular to pq */
+        double mx = (p.x + q.x) / 2.0, my = (p.y + q.y) / 2.0;
+        double nx = -(q.y - p.y), ny = q.x - p.x;       /* perpendicular to pq */
         double nlen = Math.hypot(nx, ny);
         if (nlen == 0) {
             return circumcentre(tris, points, t);
         }
         nx /= nlen;
         ny /= nlen;
-        if ((r[0] - mx) * nx + (r[1] - my) * ny < 0) {  /* orient toward apex */
+        if ((r.x - mx) * nx + (r.y - my) * ny < 0) {    /* orient toward apex */
             nx = -nx;
             ny = -ny;
         }
@@ -400,29 +395,36 @@ public final class JavaTriangleMesher implements TriangleMesher {
            puts the apex next to the edge and spawns slivers. */
         double h = e * (beta + Math.sqrt(radicand));
 
-        double[] cc = circumcentre(tris, points, t);
-        double dc = Math.hypot(cc[0] - mx, cc[1] - my);
+        Point cc = circumcentre(tris, points, t);
+        double dc = Math.hypot(cc.x - mx, cc.y - my);
         if (dc > 0 && !Double.isNaN(dc) && !Double.isInfinite(dc) && h > dc) {
             h = dc;                                /* don't overshoot the circumcentre */
         }
-        return new double[]{mx + h * nx, my + h * ny};
+        return new Point(mx + h * nx, my + h * ny);
     }
 
-    private static double dist2(double[] a, double[] b) {
-        double dx = a[0] - b[0], dy = a[1] - b[1];
+    private static double dist2(Point a, Point b) {
+        double dx = a.x - b.x, dy = a.y - b.y;
         return dx * dx + dy * dy;
     }
 
-    private static double[] circumcentre(List<int[]> tris, List<double[]> points, int t) {
-        int[] tc = tris.get(t);
-        double[] a = points.get(tc[0]), b = points.get(tc[1]), c = points.get(tc[2]);
-        double d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
-        double a2 = a[0] * a[0] + a[1] * a[1];
-        double b2 = b[0] * b[0] + b[1] * b[1];
-        double c2 = c[0] * c[0] + c[1] * c[1];
-        double ux = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
-        double uy = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
-        return new double[]{ux, uy};
+    private static double dist2(Points points, int a, int b) {
+        double dx = points.x(a) - points.x(b), dy = points.y(a) - points.y(b);
+        return dx * dx + dy * dy;
+    }
+
+    private static Point circumcentre(List<Triangle> tris, Points points, int t) {
+        Triangle tc = tris.get(t);
+        double ax = points.x(tc.a), ay = points.y(tc.a);
+        double bx = points.x(tc.b), by = points.y(tc.b);
+        double cx = points.x(tc.c), cy = points.y(tc.c);
+        double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+        double a2 = ax * ax + ay * ay;
+        double b2 = bx * bx + by * by;
+        double c2 = cx * cx + cy * cy;
+        double ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d;
+        double uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+        return new Point(ux, uy);
     }
 
 }

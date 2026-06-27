@@ -1,7 +1,6 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesherOutput;
-import com.acme.triangle.predicate.Predicates;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -42,18 +41,11 @@ import java.util.Set;
  */
 final class IncrementalCdt {
 
-    /** Vertex provenance, needed by the small-feature refinement rules. */
-    static final int INPUT = 0;     /* an original input vertex (segment joins) */
-    static final int SEGMENT = 1;   /* created by splitting a segment (on its interior) */
-    static final int FREE = 2;      /* an interior Steiner point */
-
-    private final List<double[]> points = new ArrayList<>();
-    private final List<Integer> vtype = new ArrayList<>();    /* INPUT/SEGMENT/FREE per vertex */
-    private final List<int[]> vseg = new ArrayList<>();       /* {origOrg,origDest} for SEGMENT, else null */
-    private final List<int[]> tris = new ArrayList<>();       /* CCW {a, b, c}, null if dead */
-    private final List<int[]> nbrs = new ArrayList<>();       /* 3 neighbour ids (or -1), parallel to tris */
-    private final List<Double> attrs;                         /* per-tri attr, or null */
-    private final List<int[]> segments = new ArrayList<>();   /* {a,b,marker,origOrg,origDest} */
+    private final Points points;                              /* coordinates per vertex */
+    private final List<Provenance> provenances = new ArrayList<>();  /* identity per vertex */
+    private final List<Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
+    private final boolean haveAttr;                           /* whether triangles carry a region attribute */
+    private final List<Segment> segments = new ArrayList<>();
     private final Set<Long> segSet = new HashSet<>();
     /* For each segment edge, one live incident triangle id - so the apexes that
        decide encroachment are an O(1) adjacency hop, not an O(T) edge->apex
@@ -75,23 +67,22 @@ final class IncrementalCdt {
     private int gen;
 
     IncrementalCdt(TriangleMesherOutput base) {
+        points = new Points(base.pointList, base.numberOfPoints);
         for (int i = 0; i < base.numberOfPoints; i++) {
-            points.add(new double[]{base.pointList[2 * i], base.pointList[2 * i + 1]});
-            vtype.add(INPUT);
-            vseg.add(null);
+            provenances.add(new Provenance(VertexType.INPUT, -1, -1));
         }
-        boolean haveAttr = base.triangleAttributeList != null;
-        attrs = haveAttr ? new ArrayList<>() : null;
-        for (int i = 0; i < base.numberOfTriangles; i++) {
-            tris.add(new int[]{base.triangleList[3 * i], base.triangleList[3 * i + 1],
-                    base.triangleList[3 * i + 2]});
-            if (haveAttr) {
-                attrs.add(base.triangleAttributeList[i]);
-            }
+        haveAttr = base.triangleAttributeList != null;
+        for (int i = 0; i < base.numberOfTriangles; i++) {     /* corners now, links below */
+            double attr = haveAttr ? base.triangleAttributeList[i] : 0.0;
+            tris.add(new Triangle(base.triangleList[3 * i], base.triangleList[3 * i + 1],
+                    base.triangleList[3 * i + 2], -1, -1, -1, attr));
         }
         int[] adj = adjacency(tris);             /* one-time global build at construction */
         for (int i = 0; i < base.numberOfTriangles; i++) {
-            nbrs.add(new int[]{adj[3 * i], adj[3 * i + 1], adj[3 * i + 2]});
+            Triangle t = tris.get(i);
+            t.n0 = adj[3 * i];
+            t.n1 = adj[3 * i + 1];
+            t.n2 = adj[3 * i + 2];
         }
         liveCount = base.numberOfTriangles;
         cavityGen = new int[Math.max(16, tris.size())];
@@ -99,14 +90,14 @@ final class IncrementalCdt {
             for (int i = 0; i < base.numberOfSegments; i++) {
                 int a = base.segmentList[2 * i], b = base.segmentList[2 * i + 1];
                 int marker = base.segmentMarkerList != null ? base.segmentMarkerList[i] : 0;
-                segments.add(new int[]{a, b, marker, a, b});   /* original endpoints = a, b */
+                segments.add(new Segment(a, b, marker, a, b));   /* original endpoints = a, b */
                 segSet.add(key(a, b));
             }
         }
         for (int i = 0; i < tris.size(); i++) {            /* seed segment->triangle */
-            int[] t = tris.get(i);
+            Triangle t = tris.get(i);
             for (int j = 0; j < 3; j++) {
-                long k = key(t[j], t[(j + 1) % 3]);
+                long k = key(t.corner(j), t.corner((j + 1) % 3));
                 if (segSet.contains(k)) {
                     segTri.put(k, i);
                 }
@@ -114,13 +105,10 @@ final class IncrementalCdt {
         }
     }
 
-    int vertexType(int i) {
-        return vtype.get(i);
-    }
-
-    /** For a SEGMENT vertex, the original input segment's endpoints; else null. */
-    int[] vertexSeg(int i) {
-        return vseg.get(i);
+    /** The provenance (kind, and original segment for a split-segment vertex) of
+        vertex {@code i}. */
+    Provenance provenance(int i) {
+        return provenances.get(i);
     }
 
     /* Live views for the refinement loop, so it reads the mesh in place rather
@@ -128,22 +116,21 @@ final class IncrementalCdt {
        are mutated in place (slots reused/nulled), so the references are stable;
        dead triangles appear as null and scanning consumers must skip them. */
 
-    List<double[]> pointsView() {
+    Points pointsView() {
         return points;
     }
 
-    List<int[]> trianglesView() {
+    List<Triangle> trianglesView() {
         return tris;
     }
 
-    /** Each entry is {a, b, marker, origOrg, origDest}. */
-    List<int[]> segmentsView() {
+    List<Segment> segmentsView() {
         return segments;
     }
 
-    /** Per-triangle region attributes parallel to {@link #trianglesView()}, or null. */
-    List<Double> attrsView() {
-        return attrs;
+    /** Whether triangles carry a region attribute (read via {@link Triangle#attr}). */
+    boolean hasAttributes() {
+        return haveAttr;
     }
 
     /** Stable ids of the triangles created by the most recent insertion or
@@ -167,15 +154,13 @@ final class IncrementalCdt {
      *
      * @return the new vertex index
      */
-    int insertInteriorPoint(double[] p) {
-        int start = locate(p[0], p[1]);
+    int insertInteriorPoint(Point p) {
+        int start = locate(p.x, p.y);
         if (start < 0) {
             throw new IllegalArgumentException("point is not inside the domain");
         }
-        int pIdx = points.size();
-        points.add(p);
-        vtype.add(FREE);
-        vseg.add(null);
+        int pIdx = points.add(p);
+        provenances.add(new Provenance(VertexType.FREE, -1, -1));
         insertViaCavity(pIdx, new int[]{start}, -1L);
         return pIdx;
     }
@@ -195,26 +180,23 @@ final class IncrementalCdt {
      * @return the new midpoint vertex index
      */
     int splitSegment(int segIndex) {
-        int[] seg = segments.get(segIndex);
-        int a = seg[0], b = seg[1], marker = seg[2], origOrg = seg[3], origDest = seg[4];
+        Segment seg = segments.get(segIndex);
+        int a = seg.a, b = seg.b, marker = seg.marker, origOrg = seg.origOrg, origDest = seg.origDest;
         int[] seeds = incidentTriangles(a, b);
         if (seeds.length == 0) {
             throw new IllegalStateException("segment (" + a + "," + b + ") is not an edge");
         }
         double frac = shellSplitFraction(a, b);
-        double[] pa = points.get(a), pb = points.get(b);
-        int mIdx = points.size();
-        points.add(new double[]{pa[0] + frac * (pb[0] - pa[0]),
-                pa[1] + frac * (pb[1] - pa[1])});
-        vtype.add(SEGMENT);
-        vseg.add(new int[]{origOrg, origDest});
+        double ax = points.x(a), ay = points.y(a), bx = points.x(b), by = points.y(b);
+        int mIdx = points.add(ax + frac * (bx - ax), ay + frac * (by - ay));
+        provenances.add(new Provenance(VertexType.SEGMENT, origOrg, origDest));
 
         segSet.remove(key(a, b));            /* let the cavity span the old segment */
         segTri.remove(key(a, b));
         insertViaCavity(mIdx, seeds, key(a, b));
 
-        segments.set(segIndex, new int[]{a, mIdx, marker, origOrg, origDest});
-        segments.add(new int[]{mIdx, b, marker, origOrg, origDest});
+        segments.set(segIndex, new Segment(a, mIdx, marker, origOrg, origDest));
+        segments.add(new Segment(mIdx, b, marker, origOrg, origDest));
         segSet.add(key(a, mIdx));
         segSet.add(key(mIdx, b));
         /* The halves are new segments incident to mIdx; back each with one of the
@@ -229,9 +211,9 @@ final class IncrementalCdt {
         that carries it. */
     private void indexSegmentTriangle(int a, int b) {
         for (int id : lastFan) {
-            int[] t = tris.get(id);
-            boolean ha = t[0] == a || t[1] == a || t[2] == a;
-            boolean hb = t[0] == b || t[1] == b || t[2] == b;
+            Triangle t = tris.get(id);
+            boolean ha = t.a == a || t.b == a || t.c == a;
+            boolean hb = t.a == b || t.b == b || t.c == b;
             if (ha && hb) {
                 segTri.put(key(a, b), id);
                 return;
@@ -248,12 +230,12 @@ final class IncrementalCdt {
      * Away from joins, split at the midpoint.
      */
     private double shellSplitFraction(int a, int b) {
-        boolean acuteOrg = vtype.get(a) == INPUT;
-        boolean acuteDest = vtype.get(b) == INPUT;
+        boolean acuteOrg = provenances.get(a).type == VertexType.INPUT;
+        boolean acuteDest = provenances.get(b).type == VertexType.INPUT;
         if (!acuteOrg && !acuteDest) {
             return 0.5;
         }
-        double len = Math.sqrt(dist2(points.get(a), points.get(b)));
+        double len = Math.sqrt(dist2(a, b));
         double npot = 1.0;
         while (len > 3.0 * npot) {
             npot *= 2.0;
@@ -289,7 +271,7 @@ final class IncrementalCdt {
      * neighbour's link back into the cavity is repointed to the new triangle.
      */
     private void insertViaCavity(int pIdx, int[] seeds, long skipEdgeKey) {
-        double[] p = points.get(pIdx);
+        Point p = points.at(pIdx);
         gen++;
         lastFan.clear();
         List<Integer> cavity = new ArrayList<>();
@@ -303,14 +285,13 @@ final class IncrementalCdt {
         while (!stack.isEmpty()) {
             int t = stack.pop();
             cavity.add(t);
-            int[] tc = tris.get(t);
-            int[] tn = nbrs.get(t);
+            Triangle tc = tris.get(t);
             for (int j = 0; j < 3; j++) {
-                int nb = tn[j];
+                int nb = tc.neighbor(j);
                 if (nb < 0 || cavityGen[nb] == gen) {
                     continue;
                 }
-                int u = tc[(j + 1) % 3], w = tc[(j + 2) % 3];
+                int u = tc.corner((j + 1) % 3), w = tc.corner((j + 2) % 3);
                 if (segSet.contains(key(u, w))) {
                     continue;                       /* never cross a segment */
                 }
@@ -325,21 +306,16 @@ final class IncrementalCdt {
            before freeing the cavity, since freeing nulls the slots. A cavity edge
            is on the boundary when its neighbour is outside the cavity or it is a
            segment; the split edge (skipEdgeKey) is never re-fanned. */
-        List<int[]> fan = new ArrayList<>();               /* {u, w, outerNeighbour} */
-        List<Double> fanAttr = attrs != null ? new ArrayList<>() : null;
+        List<BoundaryEdge> fan = new ArrayList<>();
         for (int t : cavity) {
-            int[] tc = tris.get(t);
-            int[] tn = nbrs.get(t);
+            Triangle tc = tris.get(t);
             for (int j = 0; j < 3; j++) {
-                int nb = tn[j];
-                int u = tc[(j + 1) % 3], w = tc[(j + 2) % 3];
+                int nb = tc.neighbor(j);
+                int u = tc.corner((j + 1) % 3), w = tc.corner((j + 2) % 3);
                 long k = key(u, w);
                 boolean boundary = nb < 0 || cavityGen[nb] != gen || segSet.contains(k);
                 if (boundary && k != skipEdgeKey) {
-                    fan.add(new int[]{u, w, nb});
-                    if (fanAttr != null) {
-                        fanAttr.add(attrs.get(t));
-                    }
+                    fan.add(new BoundaryEdge(u, w, nb, tc.attr));
                 }
             }
         }
@@ -352,58 +328,62 @@ final class IncrementalCdt {
            interior fan edge through p and are linked when the second is created. */
         Map<Integer, Integer> asU = new HashMap<>();
         Map<Integer, Integer> asW = new HashMap<>();
-        for (int i = 0; i < fan.size(); i++) {
-            int[] f = fan.get(i);
-            int u = f[0], w = f[1], nb = f[2];
-            int id = allocSlot(new int[]{u, w, pIdx}, new int[]{-1, -1, nb},
-                    fanAttr != null ? fanAttr.get(i) : null);
+        for (BoundaryEdge f : fan) {
+            int u = f.u, w = f.w, nb = f.nb;
+            int id = allocSlot(new Triangle(u, w, pIdx, -1, -1, nb, f.attr));
             lastFan.add(id);
             long uw = key(u, w);
             if (segSet.contains(uw)) {                      /* this fan tri now backs the segment */
                 segTri.put(uw, id);
             }
             if (nb >= 0) {                                  /* repoint the outer ring */
-                int[] nc = tris.get(nb);
-                int[] nn = nbrs.get(nb);
+                Triangle nc = tris.get(nb);
                 for (int k = 0; k < 3; k++) {
-                    if (nc[k] != u && nc[k] != w) {
-                        nn[k] = id;                         /* edge opposite the apex is (u,w) */
+                    if (nc.corner(k) != u && nc.corner(k) != w) {
+                        nc.setNeighbor(k, id);              /* edge opposite the apex is (u,w) */
                         break;
                     }
                 }
             }
             Integer mu = asW.get(u);
             if (mu != null) {                               /* shares the (p,u) edge */
-                nbrs.get(id)[1] = mu;
-                nbrs.get(mu)[0] = id;
+                tris.get(id).n1 = mu;
+                tris.get(mu).n0 = id;
             }
             asU.put(u, id);
             Integer mw = asU.get(w);
             if (mw != null) {                               /* shares the (w,p) edge */
-                nbrs.get(id)[0] = mw;
-                nbrs.get(mw)[1] = id;
+                tris.get(id).n0 = mw;
+                tris.get(mw).n1 = id;
             }
             asW.put(w, id);
         }
     }
 
+    /** A cavity-boundary edge to re-fan: the oriented edge (u, w), the outer
+        neighbour slot across it (or -1), and the region attribute inherited from
+        the cavity triangle it came from. */
+    private static final class BoundaryEdge {
+        final int u, w, nb;
+        final double attr;
+
+        BoundaryEdge(int u, int w, int nb, double attr) {
+            this.u = u;
+            this.w = w;
+            this.nb = nb;
+            this.attr = attr;
+        }
+    }
+
     /** Reuse a dead slot if any, else append; returns the slot id. */
-    private int allocSlot(int[] corners, int[] links, Double attr) {
+    private int allocSlot(Triangle t) {
         int id;
         if (!freeSlots.isEmpty()) {
             id = freeSlots.pop();
-            tris.set(id, corners);
-            nbrs.set(id, links);
-            if (attrs != null) {
-                attrs.set(id, attr);
-            }
+            tris.set(id, t);
         } else {
             id = tris.size();
-            tris.add(corners);
-            nbrs.add(links);
-            if (attrs != null) {
-                attrs.add(attr);
-            }
+            tris.add(t);
             ensureCavityGen(id + 1);
         }
         liveCount++;
@@ -412,7 +392,6 @@ final class IncrementalCdt {
 
     private void freeSlot(int id) {
         tris.set(id, null);
-        nbrs.set(id, null);
         freeSlots.push(id);
         liveCount--;
     }
@@ -427,12 +406,12 @@ final class IncrementalCdt {
     private int[] incidentTriangles(int a, int b) {
         int t1 = -1, t2 = -1;
         for (int i = 0; i < tris.size(); i++) {
-            int[] t = tris.get(i);
+            Triangle t = tris.get(i);
             if (t == null) {
                 continue;
             }
-            boolean ha = t[0] == a || t[1] == a || t[2] == a;
-            boolean hb = t[0] == b || t[1] == b || t[2] == b;
+            boolean ha = t.a == a || t.b == a || t.c == a;
+            boolean hb = t.a == b || t.b == b || t.c == b;
             if (ha && hb) {
                 if (t1 < 0) {
                     t1 = i;
@@ -460,30 +439,26 @@ final class IncrementalCdt {
         if (t1 == null) {
             return new int[]{-1, -1};
         }
-        int[] tc = tris.get(t1);
+        Triangle tc = tris.get(t1);
         int apex1 = third(tc, a, b);
-        int slot = tc[0] == apex1 ? 0 : tc[1] == apex1 ? 1 : 2;   /* edge (a,b) opp the apex */
-        int nb = nbrs.get(t1)[slot];
+        int slot = tc.a == apex1 ? 0 : tc.b == apex1 ? 1 : 2;     /* edge (a,b) opp the apex */
+        int nb = tc.neighbor(slot);
         int apex2 = nb < 0 ? -1 : third(tris.get(nb), a, b);
         return new int[]{apex1, apex2};
     }
 
     /** The corner of {@code tc} that is neither {@code a} nor {@code b}. */
-    private static int third(int[] tc, int a, int b) {
-        if (tc[0] != a && tc[0] != b) {
-            return tc[0];
+    private static int third(Triangle tc, int a, int b) {
+        if (tc.a != a && tc.a != b) {
+            return tc.a;
         }
-        return tc[1] != a && tc[1] != b ? tc[1] : tc[2];
+        return tc.b != a && tc.b != b ? tc.b : tc.c;
     }
 
     TriangleMesherOutput toOutput() {
         TriangleMesherOutput o = new TriangleMesherOutput();
         o.numberOfPoints = points.size();
-        o.pointList = new double[points.size() * 2];
-        for (int i = 0; i < points.size(); i++) {
-            o.pointList[2 * i] = points.get(i)[0];
-            o.pointList[2 * i + 1] = points.get(i)[1];
-        }
+        o.pointList = points.toArray();
         /* Compact live slots to contiguous output indices, remapping the
            maintained neighbour links through the same mapping. */
         int[] remap = new int[tris.size()];
@@ -497,35 +472,34 @@ final class IncrementalCdt {
         o.numberOfTriangles = nt;
         o.triangleList = new int[3 * nt];
         o.neighborList = new int[3 * nt];
-        boolean haveAttr = attrs != null;
         if (haveAttr) {
             o.triangleAttributeList = new double[nt];
         }
         for (int i = 0; i < tris.size(); i++) {
-            int[] tc = tris.get(i);
+            Triangle tc = tris.get(i);
             if (tc == null) {
                 continue;
             }
             int ni = remap[i];
-            o.triangleList[3 * ni] = tc[0];
-            o.triangleList[3 * ni + 1] = tc[1];
-            o.triangleList[3 * ni + 2] = tc[2];
-            int[] tn = nbrs.get(i);
+            o.triangleList[3 * ni] = tc.a;
+            o.triangleList[3 * ni + 1] = tc.b;
+            o.triangleList[3 * ni + 2] = tc.c;
             for (int j = 0; j < 3; j++) {
-                o.neighborList[3 * ni + j] = tn[j] < 0 ? -1 : remap[tn[j]];
+                int nb = tc.neighbor(j);
+                o.neighborList[3 * ni + j] = nb < 0 ? -1 : remap[nb];
             }
             if (haveAttr) {
-                o.triangleAttributeList[ni] = attrs.get(i);
+                o.triangleAttributeList[ni] = tc.attr;
             }
         }
         o.numberOfSegments = segments.size();
         o.segmentList = new int[2 * segments.size()];
         o.segmentMarkerList = new int[segments.size()];
         for (int i = 0; i < segments.size(); i++) {
-            int[] s = segments.get(i);
-            o.segmentList[2 * i] = s[0];
-            o.segmentList[2 * i + 1] = s[1];
-            o.segmentMarkerList[i] = s[2];
+            Segment s = segments.get(i);
+            o.segmentList[2 * i] = s.a;
+            o.segmentList[2 * i + 1] = s.b;
+            o.segmentMarkerList[i] = s.marker;
         }
         return o;
     }
@@ -536,7 +510,7 @@ final class IncrementalCdt {
      * adjacency directly, with tighter localization than the output validator.
      */
     boolean adjacencyConsistent() {
-        List<int[]> live = new ArrayList<>();
+        List<Triangle> live = new ArrayList<>();
         int[] remap = new int[tris.size()];
         Arrays.fill(remap, -1);
         for (int i = 0; i < tris.size(); i++) {
@@ -547,13 +521,14 @@ final class IncrementalCdt {
         }
         int[] fresh = adjacency(live);
         for (int i = 0; i < tris.size(); i++) {
-            if (tris.get(i) == null) {
+            Triangle t = tris.get(i);
+            if (t == null) {
                 continue;
             }
             int ni = remap[i];
-            int[] tn = nbrs.get(i);
             for (int j = 0; j < 3; j++) {
-                int maint = tn[j] < 0 ? -1 : remap[tn[j]];
+                int nb = t.neighbor(j);
+                int maint = nb < 0 ? -1 : remap[nb];
                 if (maint != fresh[3 * ni + j]) {
                     return false;
                 }
@@ -563,65 +538,46 @@ final class IncrementalCdt {
     }
 
     /** Centroid of the current largest-area triangle (a robust interior point). */
-    double[] centroidOfLargestTriangle() {
+    Point centroidOfLargestTriangle() {
         int best = -1;
         double bestArea = -1;
         for (int i = 0; i < tris.size(); i++) {
-            int[] t = tris.get(i);
+            Triangle t = tris.get(i);
             if (t == null) {
                 continue;
             }
-            double[] a = points.get(t[0]), b = points.get(t[1]), c = points.get(t[2]);
-            double area = Math.abs((b[0] - a[0]) * (c[1] - a[1])
-                    - (b[1] - a[1]) * (c[0] - a[0])) / 2.0;
+            double area = Math.abs((points.x(t.b) - points.x(t.a)) * (points.y(t.c) - points.y(t.a))
+                    - (points.y(t.b) - points.y(t.a)) * (points.x(t.c) - points.x(t.a))) / 2.0;
             if (area > bestArea) {
                 bestArea = area;
                 best = i;
             }
         }
-        int[] t = tris.get(best);
-        double[] a = points.get(t[0]), b = points.get(t[1]), c = points.get(t[2]);
-        return new double[]{(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0};
+        Triangle t = tris.get(best);
+        double cx = (points.x(t.a) + points.x(t.b) + points.x(t.c)) / 3.0;
+        double cy = (points.y(t.a) + points.y(t.b) + points.y(t.c)) / 3.0;
+        return new Point(cx, cy);
     }
 
     /* --- helpers (mirroring ConstrainedDelaunayTriangulator) ----------------- */
 
-    /** neigh[3*i+j] = triangle across the edge opposite corner j, or -1. Skips
-        null (dead) slots, so it serves both the one-time construction build and
-        the {@link #adjacencyConsistent()} cross-check. */
-    private int[] adjacency(List<int[]> ts) {
-        int n = ts.size();
-        int[] neigh = new int[3 * n];
-        Arrays.fill(neigh, -1);
-        Map<Long, int[]> edge = new HashMap<>();
-        for (int i = 0; i < n; i++) {
-            int[] t = ts.get(i);
-            if (t == null) {
-                continue;
-            }
-            for (int j = 0; j < 3; j++) {
-                long k = key(t[(j + 1) % 3], t[(j + 2) % 3]);
-                int[] prev = edge.get(k);
-                if (prev == null) {
-                    edge.put(k, new int[]{i, j});
-                } else {
-                    neigh[3 * i + j] = prev[0];
-                    neigh[3 * prev[0] + prev[1]] = i;
-                }
-            }
-        }
-        return neigh;
+    /** Triangle adjacency over the live triangles {@code ts}, delegating to the
+        shared {@link Topology#neighbors}. Callers pass a null-free list: the
+        construction build runs before any slot is freed, and
+        {@link #adjacencyConsistent()} compacts the live triangles first. */
+    private int[] adjacency(List<Triangle> ts) {
+        return Topology.neighbors(ts.size(), (i, c) -> ts.get(i).corner(c));
     }
 
     private int locate(double x, double y) {
         for (int i = 0; i < tris.size(); i++) {
-            int[] t = tris.get(i);
+            Triangle t = tris.get(i);
             if (t == null) {
                 continue;
             }
-            int s1 = orientXY(t[0], t[1], x, y);
-            int s2 = orientXY(t[1], t[2], x, y);
-            int s3 = orientXY(t[2], t[0], x, y);
+            int s1 = orientXY(t.a, t.b, x, y);
+            int s2 = orientXY(t.b, t.c, x, y);
+            int s3 = orientXY(t.c, t.a, x, y);
             boolean nonNeg = s1 >= 0 && s2 >= 0 && s3 >= 0;
             boolean nonPos = s1 <= 0 && s2 <= 0 && s3 <= 0;
             if ((nonNeg || nonPos) && !(s1 == 0 && s2 == 0 && s3 == 0)) {
@@ -631,26 +587,20 @@ final class IncrementalCdt {
         return -1;
     }
 
-    private boolean inCircle(int[] t, double[] p) {
-        return Predicates.incircle(
-                points.get(t[0])[0], points.get(t[0])[1],
-                points.get(t[1])[0], points.get(t[1])[1],
-                points.get(t[2])[0], points.get(t[2])[1],
-                p[0], p[1]) > 0;
+    private boolean inCircle(Triangle t, Point p) {
+        return Geometry.inCircle(points, t.a, t.b, t.c, p);
     }
 
     private int orientXY(int a, int b, double x, double y) {
-        return Predicates.orient2d(points.get(a)[0], points.get(a)[1],
-                points.get(b)[0], points.get(b)[1], x, y);
+        return Geometry.orient2d(points, a, b, x, y);
     }
 
-    private static double dist2(double[] p, double[] q) {
-        double dx = p[0] - q[0], dy = p[1] - q[1];
+    private double dist2(int a, int b) {
+        double dx = points.x(a) - points.x(b), dy = points.y(a) - points.y(b);
         return dx * dx + dy * dy;
     }
 
     private static long key(int a, int b) {
-        int lo = Math.min(a, b), hi = Math.max(a, b);
-        return ((long) lo << 32) | (hi & 0xffffffffL);
+        return Topology.edgeKey(a, b);
     }
 }
