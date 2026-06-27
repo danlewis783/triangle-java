@@ -1,0 +1,1 @@
+package com.acme.triangle.predicate;
