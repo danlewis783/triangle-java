@@ -48,16 +48,16 @@ final class Topology {
     static int[] neighbors(int count, Corner corner) {
         int[] neigh = new int[3 * count];
         Arrays.fill(neigh, -1);
-        Map<Long, int[]> seen = new HashMap<>();   /* edge -> {triangle, oppositeCorner} */
+        Map<Long, EdgeSide> seen = new HashMap<>();
         for (int i = 0; i < count; i++) {
             for (int j = 0; j < 3; j++) {
                 long k = edgeKey(corner.of(i, (j + 1) % 3), corner.of(i, (j + 2) % 3));
-                int[] prev = seen.get(k);
+                EdgeSide prev = seen.get(k);
                 if (prev == null) {
-                    seen.put(k, new int[]{i, j});
+                    seen.put(k, new EdgeSide(i, j));
                 } else {
-                    neigh[3 * i + j] = prev[0];
-                    neigh[3 * prev[0] + prev[1]] = i;
+                    neigh[3 * i + j] = prev.tri;
+                    neigh[3 * prev.tri + prev.corner] = i;
                 }
             }
         }

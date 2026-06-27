@@ -219,18 +219,18 @@ public final class ConstrainedDelaunayTriangulator {
 
     private static @Nullable Flip findFlippableCrossing(double[] pts, List<Corners> tris,
                                                         int a, int b) {
-        Map<Long, int[]> edge = new HashMap<>();   /* edge -> {tri, oppositeCornerIdx} */
+        Map<Long, EdgeSide> edge = new HashMap<>();
         for (int i = 0; i < tris.size(); i++) {
             Corners t = tris.get(i);
             for (int j = 0; j < 3; j++) {
                 int u = t.corner((j + 1) % 3), v = t.corner((j + 2) % 3);
                 long k = key(u, v);
-                int[] prev = edge.get(k);
+                EdgeSide prev = edge.get(k);
                 if (prev == null) {
-                    edge.put(k, new int[]{i, j});
+                    edge.put(k, new EdgeSide(i, j));
                 } else {
-                    int t1 = prev[0], t2 = i;
-                    int p = tris.get(t1).corner(prev[1]);
+                    int t1 = prev.tri, t2 = i;
+                    int p = tris.get(t1).corner(prev.corner);
                     int q = t.corner(j);
                     if (cross(pts, u, v, a, b) && convex(pts, u, v, p, q)) {
                         return new Flip(Math.max(t1, t2), Math.min(t1, t2), u, v, p, q);
@@ -255,22 +255,22 @@ public final class ConstrainedDelaunayTriangulator {
         boolean changed = true;
         while (changed) {
             changed = false;
-            Map<Long, int[]> edge = new HashMap<>();
+            Map<Long, EdgeSide> edge = new HashMap<>();
             for (int i = 0; i < tris.size() && !changed; i++) {
                 Corners t = tris.get(i);
                 for (int j = 0; j < 3 && !changed; j++) {
                     int u = t.corner((j + 1) % 3), v = t.corner((j + 2) % 3);
                     long k = key(u, v);
-                    int[] prev = edge.get(k);
+                    EdgeSide prev = edge.get(k);
                     if (prev == null) {
-                        edge.put(k, new int[]{i, j});
+                        edge.put(k, new EdgeSide(i, j));
                         continue;
                     }
                     if (segSet.contains(k)) {
                         continue;
                     }
-                    int t1 = prev[0];
-                    int p = tris.get(t1).corner(prev[1]);
+                    int t1 = prev.tri;
+                    int p = tris.get(t1).corner(prev.corner);
                     int q = t.corner(j);
                     if (Geometry.inCircle(pts, tris.get(t1), q) && convex(pts, u, v, p, q)) {
                         doFlip(pts, tris, new Flip(Math.max(t1, i), Math.min(t1, i),
