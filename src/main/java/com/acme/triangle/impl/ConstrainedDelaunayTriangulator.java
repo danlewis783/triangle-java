@@ -25,7 +25,7 @@ import java.util.Set;
  *   <li>attribute: flood from each region seed across non-segment edges.</li>
  * </ol>
  *
- * All geometric tests use the robust {@link Predicates}. Refinement (quality) is
+ * All geometric tests use the robust {@link Geometry}. Refinement (quality) is
  * phase 3; this produces the unrefined constrained Delaunay mesh.
  */
 public final class ConstrainedDelaunayTriangulator {
