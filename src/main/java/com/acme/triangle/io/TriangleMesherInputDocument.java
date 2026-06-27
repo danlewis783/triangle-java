@@ -3,6 +3,7 @@ package com.acme.triangle.io;
 import com.acme.triangle.TriangleMesherInput;
 import java.util.ArrayList;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Versioned JSON document for a mesher input fixture or captured case.
@@ -11,10 +12,10 @@ public final class TriangleMesherInputDocument {
 
     public int formatVersion = 1;
     public String documentType = "triangle-mesher-input";
-    public String name;
-    public String description;
+    public @Nullable String name;
+    public @Nullable String description;
     public List<String> tags = new ArrayList<>();
-    public TriangleMesherInput input;
+    public @Nullable TriangleMesherInput input;
 
     public TriangleMesherInputDocument() {
     }

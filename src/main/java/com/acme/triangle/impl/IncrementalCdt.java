@@ -1,6 +1,8 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesherOutput;
+import org.jspecify.annotations.Nullable;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -43,7 +45,7 @@ final class IncrementalCdt {
 
     private final Points points;                              /* coordinates per vertex */
     private final List<Provenance> provenances = new ArrayList<>();  /* identity per vertex */
-    private final List<Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
+    private final List<@Nullable Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
     private final boolean haveAttr;                           /* whether triangles carry a region attribute */
     private final List<Segment> segments = new ArrayList<>();
     private final Set<Long> segSet = new HashSet<>();
@@ -71,9 +73,10 @@ final class IncrementalCdt {
         for (int i = 0; i < base.numberOfPoints; i++) {
             provenances.add(new Provenance(VertexType.INPUT, -1, -1));
         }
-        haveAttr = base.triangleAttributeList != null;
+        double[] baseAttr = base.triangleAttributeList;
+        haveAttr = baseAttr != null;
         for (int i = 0; i < base.numberOfTriangles; i++) {     /* corners now, links below */
-            double attr = haveAttr ? base.triangleAttributeList[i] : 0.0;
+            double attr = baseAttr != null ? baseAttr[i] : 0.0;
             tris.add(new Triangle(base.triangleList[3 * i], base.triangleList[3 * i + 1],
                     base.triangleList[3 * i + 2], -1, -1, -1, attr));
         }
@@ -86,10 +89,11 @@ final class IncrementalCdt {
         }
         liveCount = base.numberOfTriangles;
         cavityGen = new int[Math.max(16, tris.size())];
-        if (base.segmentList != null) {
+        int[] segList = base.segmentList, segMarkers = base.segmentMarkerList;
+        if (segList != null) {
             for (int i = 0; i < base.numberOfSegments; i++) {
-                int a = base.segmentList[2 * i], b = base.segmentList[2 * i + 1];
-                int marker = base.segmentMarkerList != null ? base.segmentMarkerList[i] : 0;
+                int a = segList[2 * i], b = segList[2 * i + 1];
+                int marker = segMarkers != null ? segMarkers[i] : 0;
                 segments.add(new Segment(a, b, marker, a, b));   /* original endpoints = a, b */
                 segSet.add(key(a, b));
             }
@@ -472,9 +476,8 @@ final class IncrementalCdt {
         o.numberOfTriangles = nt;
         o.triangleList = new int[3 * nt];
         o.neighborList = new int[3 * nt];
-        if (haveAttr) {
-            o.triangleAttributeList = new double[nt];
-        }
+        double[] outAttr = haveAttr ? new double[nt] : null;
+        o.triangleAttributeList = outAttr;
         for (int i = 0; i < tris.size(); i++) {
             Triangle tc = tris.get(i);
             if (tc == null) {
@@ -488,8 +491,8 @@ final class IncrementalCdt {
                 int nb = tc.neighbor(j);
                 o.neighborList[3 * ni + j] = nb < 0 ? -1 : remap[nb];
             }
-            if (haveAttr) {
-                o.triangleAttributeList[ni] = tc.attr;
+            if (outAttr != null) {
+                outAttr[ni] = tc.attr;
             }
         }
         o.numberOfSegments = segments.size();

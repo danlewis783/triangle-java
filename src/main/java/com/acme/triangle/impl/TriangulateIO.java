@@ -2,6 +2,7 @@ package com.acme.triangle.impl;
 
 import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
+import org.jspecify.annotations.Nullable;
 
 /**
  * JNA mapping of C {@code struct triangulateio} (triangle.h). The field order
@@ -23,32 +24,34 @@ import com.sun.jna.Structure;
 })
 public class TriangulateIO extends Structure {
 
-    public Pointer pointlist;              /* in / out: REAL[2*N] */
-    public Pointer pointattributelist;     /* in / out: REAL[] */
-    public Pointer pointmarkerlist;        /* in / out: int[N] */
+    /* Array fields are native pointers JNA fills from the C struct; any of them
+       may be null (absent input, unrequested output), so all are @Nullable. */
+    public @Nullable Pointer pointlist;              /* in / out: REAL[2*N] */
+    public @Nullable Pointer pointattributelist;     /* in / out: REAL[] */
+    public @Nullable Pointer pointmarkerlist;        /* in / out: int[N] */
     public int numberofpoints;
     public int numberofpointattributes;
 
-    public Pointer trianglelist;           /* in / out: int[corners*T] */
-    public Pointer triangleattributelist;  /* in / out: REAL[] */
-    public Pointer trianglearealist;       /* in only:  REAL[T] */
-    public Pointer neighborlist;           /* out only: int[3*T] */
+    public @Nullable Pointer trianglelist;           /* in / out: int[corners*T] */
+    public @Nullable Pointer triangleattributelist;  /* in / out: REAL[] */
+    public @Nullable Pointer trianglearealist;       /* in only:  REAL[T] */
+    public @Nullable Pointer neighborlist;           /* out only: int[3*T] */
     public int numberoftriangles;
     public int numberofcorners;
     public int numberoftriangleattributes;
 
-    public Pointer segmentlist;            /* in / out: int[2*S] */
-    public Pointer segmentmarkerlist;      /* in / out: int[S] */
+    public @Nullable Pointer segmentlist;            /* in / out: int[2*S] */
+    public @Nullable Pointer segmentmarkerlist;      /* in / out: int[S] */
     public int numberofsegments;
 
-    public Pointer holelist;               /* in / copied out: REAL[2*H] */
+    public @Nullable Pointer holelist;               /* in / copied out: REAL[2*H] */
     public int numberofholes;
 
-    public Pointer regionlist;             /* in / copied out: REAL[4*R] */
+    public @Nullable Pointer regionlist;             /* in / copied out: REAL[4*R] */
     public int numberofregions;
 
-    public Pointer edgelist;               /* out only */
-    public Pointer edgemarkerlist;         /* out only */
-    public Pointer normlist;               /* Voronoi only (unused) */
+    public @Nullable Pointer edgelist;               /* out only */
+    public @Nullable Pointer edgemarkerlist;         /* out only */
+    public @Nullable Pointer normlist;               /* Voronoi only (unused) */
     public int numberofedges;
 }

@@ -1,5 +1,9 @@
+import net.ltgt.gradle.errorprone.CheckSeverity
+import net.ltgt.gradle.errorprone.errorprone
+
 plugins {
     java
+    id("net.ltgt.errorprone") version "4.0.1"
 }
 
 repositories {
@@ -18,11 +22,17 @@ sourceSets {
 dependencies {
     implementation(libs.jna)
     implementation(libs.jackson.databind)
+    implementation(libs.jspecify)
     testImplementation(libs.assertj)
     // The bench source set sees the same dependencies as main (e.g. JNA).
     "benchImplementation"(sourceSets.main.get().output)
     "benchImplementation"(libs.jna)
     "benchImplementation"(libs.jackson.databind)
+    "benchImplementation"(libs.jspecify)
+
+    // Null-checking: NullAway runs as an Error Prone plugin (enabled on main only).
+    errorprone(libs.errorprone.core)
+    errorprone(libs.nullaway)
 }
 
 testing {
@@ -46,7 +56,25 @@ tasks.register<JavaExec>("bench") {
 }
 
 java {
+    // Compile with 17 (Error Prone/NullAway need a >=11 compiler to run) but keep
+    // emitting Java 8 bytecode via release below, so the artifact stays Java 8.
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(8))
+        languageVersion.set(JavaLanguageVersion.of(17))
+    }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(8)
+    options.errorprone.isEnabled.set(false)   // off everywhere; enabled for main below
+}
+
+// NullAway only (not the rest of Error Prone), over the project's packages, main
+// sources only - this is a nullness audit, not a general lint pass.
+tasks.named<JavaCompile>("compileJava") {
+    options.errorprone {
+        isEnabled.set(true)
+        disableAllChecks.set(true)
+        check("NullAway", CheckSeverity.ERROR)
+        option("NullAway:AnnotatedPackages", "com.acme.triangle")
     }
 }

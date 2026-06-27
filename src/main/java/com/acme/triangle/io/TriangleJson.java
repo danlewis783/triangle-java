@@ -28,6 +28,9 @@ public final class TriangleJson {
 
     public static TriangleMesherInput readInput(Path path) {
         TriangleMesherInputDocument doc = readInputDocument(path);
+        if (doc.input == null) {
+            throw new IllegalArgumentException("document has no input: " + path);
+        }
         return doc.input;
     }
 

@@ -7,6 +7,7 @@ import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
 import java.util.ArrayList;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * {@link TriangleMesher} backed by the native Triangle library via JNA.
@@ -32,7 +33,7 @@ public final class NativeTriangleMesher implements TriangleMesher {
         try {
             in.pointlist = doubles(input.pointList, input.numberOfPoints * 2, owned);
             in.numberofpoints = input.numberOfPoints;
-            if (input.numberOfSegments > 0) {
+            if (input.numberOfSegments > 0 && input.segmentList != null) {
                 in.segmentlist = ints(input.segmentList, input.numberOfSegments * 2, owned);
                 in.numberofsegments = input.numberOfSegments;
                 if (input.segmentMarkerList != null) {
@@ -40,11 +41,11 @@ public final class NativeTriangleMesher implements TriangleMesher {
                             ints(input.segmentMarkerList, input.numberOfSegments, owned);
                 }
             }
-            if (input.numberOfHoles > 0) {
+            if (input.numberOfHoles > 0 && input.holeList != null) {
                 in.holelist = doubles(input.holeList, input.numberOfHoles * 2, owned);
                 in.numberofholes = input.numberOfHoles;
             }
-            if (input.numberOfRegions > 0) {
+            if (input.numberOfRegions > 0 && input.regionList != null) {
                 in.regionlist = doubles(input.regionList, input.numberOfRegions * 4, owned);
                 in.numberofregions = input.numberOfRegions;
             }
@@ -118,7 +119,7 @@ public final class NativeTriangleMesher implements TriangleMesher {
 
     /** Free only the arrays Triangle allocated; holelist/regionlist alias input. */
     private static void freeTriangleArrays(TriangulateIO out) {
-        Pointer[] allocated = {
+        @Nullable Pointer[] allocated = {
                 out.pointlist, out.pointattributelist, out.pointmarkerlist,
                 out.trianglelist, out.triangleattributelist, out.neighborlist,
                 out.segmentlist, out.segmentmarkerlist, out.edgelist, out.edgemarkerlist

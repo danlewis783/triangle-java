@@ -3,6 +3,7 @@ package com.acme.triangle.impl;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import org.jspecify.annotations.Nullable;
 
 /**
  * JNA binding to the native Triangle shared library ({@code triangle.dll} /
@@ -19,7 +20,7 @@ interface TriangleLibrary extends Library {
      * Triangle only reads {@code switches}; pass {@code null} for {@code vorout}.
      */
     void triangulate(String switches, TriangulateIO in, TriangulateIO out,
-                     TriangulateIO vorout);
+                     @Nullable TriangulateIO vorout);
 
     /** {@code void trifree(void *)} - frees an array Triangle allocated. */
     void trifree(Pointer memptr);

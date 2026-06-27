@@ -2,6 +2,7 @@ package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
+import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -75,10 +76,17 @@ public final class ConstrainedDelaunayTriangulator {
      * produced by {@link #splitIntersections}.
      */
     private static final class Pslg {
-        double[] points;
-        int numPoints;
-        List<int[]> segments;     /* {a, b, marker} */
-        boolean hasRegions;
+        final double[] points;
+        final int numPoints;
+        final List<int[]> segments;     /* {a, b, marker} */
+        final boolean hasRegions;
+
+        Pslg(double[] points, int numPoints, List<int[]> segments, boolean hasRegions) {
+            this.points = points;
+            this.numPoints = numPoints;
+            this.segments = segments;
+            this.hasRegions = hasRegions;
+        }
     }
 
     private static Pslg splitIntersections(TriangleMesherInput in) {
@@ -87,9 +95,12 @@ public final class ConstrainedDelaunayTriangulator {
             pts.add(new double[]{in.pointList[2 * i], in.pointList[2 * i + 1]});
         }
         List<int[]> segs = new ArrayList<>();
-        for (int i = 0; i < in.numberOfSegments; i++) {
-            int marker = in.segmentMarkerList != null ? in.segmentMarkerList[i] : 0;
-            segs.add(new int[]{in.segmentList[2 * i], in.segmentList[2 * i + 1], marker});
+        int[] segList = in.segmentList, segMarkers = in.segmentMarkerList;
+        if (segList != null) {
+            for (int i = 0; i < in.numberOfSegments; i++) {
+                int marker = segMarkers != null ? segMarkers[i] : 0;
+                segs.add(new int[]{segList[2 * i], segList[2 * i + 1], marker});
+            }
         }
 
         boolean changed = true;
@@ -140,16 +151,13 @@ public final class ConstrainedDelaunayTriangulator {
             }
         }
 
-        Pslg p = new Pslg();
-        p.numPoints = pts.size();
-        p.points = new double[p.numPoints * 2];
-        for (int i = 0; i < p.numPoints; i++) {
-            p.points[2 * i] = pts.get(i)[0];
-            p.points[2 * i + 1] = pts.get(i)[1];
+        int numPoints = pts.size();
+        double[] flatPts = new double[numPoints * 2];
+        for (int i = 0; i < numPoints; i++) {
+            flatPts[2 * i] = pts.get(i)[0];
+            flatPts[2 * i + 1] = pts.get(i)[1];
         }
-        p.segments = segs;
-        p.hasRegions = in.numberOfRegions > 0;
-        return p;
+        return new Pslg(flatPts, numPoints, segs, in.numberOfRegions > 0);
     }
 
     private static boolean share(int[] a, int[] b) {
@@ -209,8 +217,8 @@ public final class ConstrainedDelaunayTriangulator {
         }
     }
 
-    private static Flip findFlippableCrossing(double[] pts, List<Corners> tris,
-                                              int a, int b) {
+    private static @Nullable Flip findFlippableCrossing(double[] pts, List<Corners> tris,
+                                                        int a, int b) {
         Map<Long, int[]> edge = new HashMap<>();   /* edge -> {tri, oppositeCornerIdx} */
         for (int i = 0; i < tris.size(); i++) {
             Corners t = tris.get(i);
@@ -283,7 +291,7 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     private static boolean[] carve(double[] pts, List<Corners> tris, Set<Long> segSet,
-                                   double[] holes, int numHoles) {
+                                   double @Nullable [] holes, int numHoles) {
         int n = tris.size();
         int[] neigh = adjacency(tris);
         boolean[] removed = new boolean[n];
@@ -302,21 +310,23 @@ public final class ConstrainedDelaunayTriangulator {
             }
         }
         /* Seed: triangle containing each hole point. */
-        for (int h = 0; h < numHoles; h++) {
-            int t = locate(pts, tris, holes[2 * h], holes[2 * h + 1]);
-            if (t >= 0 && !removed[t]) {
-                removed[t] = true;
-                queue.add(t);
+        if (holes != null) {
+            for (int h = 0; h < numHoles; h++) {
+                int t = locate(pts, tris, holes[2 * h], holes[2 * h + 1]);
+                if (t >= 0 && !removed[t]) {
+                    removed[t] = true;
+                    queue.add(t);
+                }
             }
         }
         flood(tris, neigh, segSet, removed, queue);
         return removed;
     }
 
-    private static double[] attributeRegions(double[] pts, List<Corners> tris,
+    private static double @Nullable [] attributeRegions(double[] pts, List<Corners> tris,
                                              boolean[] removed, Set<Long> segSet,
-                                             double[] regions, int numRegions) {
-        if (numRegions == 0) {
+                                             double @Nullable [] regions, int numRegions) {
+        if (numRegions == 0 || regions == null) {
             return null;
         }
         int n = tris.size();
@@ -388,7 +398,7 @@ public final class ConstrainedDelaunayTriangulator {
 
     private static TriangleMesherOutput buildOutput(double[] pts, int np,
                                                     List<Corners> tris, boolean[] removed,
-                                                    double[] attr, Pslg pslg) {
+                                                    double @Nullable [] attr, Pslg pslg) {
         List<Integer> keep = new ArrayList<>();
         for (int i = 0; i < tris.size(); i++) {
             if (!removed[i]) {
@@ -401,18 +411,18 @@ public final class ConstrainedDelaunayTriangulator {
         o.pointList = Arrays.copyOf(pts, np * 2);
         o.numberOfTriangles = t;
         o.triangleList = new int[3 * t];
-        boolean haveAttr = attr != null;
-        if (haveAttr) {
-            o.triangleAttributeList = new double[t];
-        }
         for (int i = 0; i < t; i++) {
             Corners tr = tris.get(keep.get(i));
             o.triangleList[3 * i] = tr.a;
             o.triangleList[3 * i + 1] = tr.b;
             o.triangleList[3 * i + 2] = tr.c;
-            if (haveAttr) {
-                o.triangleAttributeList[i] = attr[keep.get(i)];
+        }
+        if (attr != null) {
+            double[] outAttr = new double[t];
+            for (int i = 0; i < t; i++) {
+                outAttr[i] = attr[keep.get(i)];
             }
+            o.triangleAttributeList = outAttr;
         }
         int[] tri = o.triangleList;
         o.neighborList = Topology.neighbors(t, (i, c) -> tri[3 * i + c]);
