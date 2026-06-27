@@ -45,9 +45,9 @@ public final class ConstrainedDelaunayTriangulator {
 
         /* 3. Recover segments. */
         Set<Long> segSet = new HashSet<>();
-        for (int[] s : pslg.segments) {
-            insertSegment(pts, tris, s[0], s[1]);
-            segSet.add(key(s[0], s[1]));
+        for (Constraint s : pslg.segments) {
+            insertSegment(pts, tris, s.a, s.b);
+            segSet.add(key(s.a, s.b));
         }
 
         /* 4. Restore constrained Delaunay. */
@@ -78,10 +78,10 @@ public final class ConstrainedDelaunayTriangulator {
     private static final class Pslg {
         final double[] points;
         final int numPoints;
-        final List<int[]> segments;     /* {a, b, marker} */
+        final List<Constraint> segments;
         final boolean hasRegions;
 
-        Pslg(double[] points, int numPoints, List<int[]> segments, boolean hasRegions) {
+        Pslg(double[] points, int numPoints, List<Constraint> segments, boolean hasRegions) {
             this.points = points;
             this.numPoints = numPoints;
             this.segments = segments;
@@ -94,12 +94,12 @@ public final class ConstrainedDelaunayTriangulator {
         for (int i = 0; i < in.numberOfPoints; i++) {
             pts.add(new double[]{in.pointList[2 * i], in.pointList[2 * i + 1]});
         }
-        List<int[]> segs = new ArrayList<>();
+        List<Constraint> segs = new ArrayList<>();
         int[] segList = in.segmentList, segMarkers = in.segmentMarkerList;
         if (segList != null) {
             for (int i = 0; i < in.numberOfSegments; i++) {
                 int marker = segMarkers != null ? segMarkers[i] : 0;
-                segs.add(new int[]{segList[2 * i], segList[2 * i + 1], marker});
+                segs.add(new Constraint(segList[2 * i], segList[2 * i + 1], marker));
             }
         }
 
@@ -111,20 +111,18 @@ public final class ConstrainedDelaunayTriangulator {
             crossings:
             for (int i = 0; i < segs.size(); i++) {
                 for (int j = i + 1; j < segs.size(); j++) {
-                    int[] a = segs.get(i), b = segs.get(j);
+                    Constraint a = segs.get(i), b = segs.get(j);
                     if (share(a, b)) {
                         continue;
                     }
-                    if (cross(pts, a[0], a[1], b[0], b[1])) {
-                        double[] x = intersection(pts, a[0], a[1], b[0], b[1]);
+                    if (cross(pts, a.a, a.b, b.a, b.b)) {
+                        double[] x = intersection(pts, a.a, a.b, b.a, b.b);
                         int c = pts.size();
                         pts.add(x);
-                        int[] a0 = {a[0], c, a[2]}, a1 = {c, a[1], a[2]};
-                        int[] b0 = {b[0], c, b[2]}, b1 = {c, b[1], b[2]};
-                        segs.set(i, a0);
-                        segs.set(j, b0);
-                        segs.add(a1);
-                        segs.add(b1);
+                        segs.set(i, new Constraint(a.a, c, a.marker));
+                        segs.set(j, new Constraint(b.a, c, b.marker));
+                        segs.add(new Constraint(c, a.b, a.marker));
+                        segs.add(new Constraint(c, b.b, b.marker));
                         changed = true;
                         break crossings;
                     }
@@ -139,11 +137,11 @@ public final class ConstrainedDelaunayTriangulator {
                with a vertex on it, so it must become a chain of subsegments. */
             onEdge:
             for (int i = 0; i < segs.size(); i++) {
-                int[] s = segs.get(i);
+                Constraint s = segs.get(i);
                 for (int v = 0; v < pts.size(); v++) {
-                    if (v != s[0] && v != s[1] && onSegmentInterior(pts, s[0], s[1], v)) {
-                        segs.set(i, new int[]{s[0], v, s[2]});
-                        segs.add(new int[]{v, s[1], s[2]});
+                    if (v != s.a && v != s.b && onSegmentInterior(pts, s.a, s.b, v)) {
+                        segs.set(i, new Constraint(s.a, v, s.marker));
+                        segs.add(new Constraint(v, s.b, s.marker));
                         changed = true;
                         break onEdge;
                     }
@@ -160,8 +158,8 @@ public final class ConstrainedDelaunayTriangulator {
         return new Pslg(flatPts, numPoints, segs, in.numberOfRegions > 0);
     }
 
-    private static boolean share(int[] a, int[] b) {
-        return a[0] == b[0] || a[0] == b[1] || a[1] == b[0] || a[1] == b[1];
+    private static boolean share(Constraint a, Constraint b) {
+        return a.a == b.a || a.a == b.b || a.b == b.a || a.b == b.b;
     }
 
     /** True if vertex v is exactly collinear with (a,b) and strictly between them. */
@@ -431,10 +429,10 @@ public final class ConstrainedDelaunayTriangulator {
         o.segmentList = new int[2 * pslg.segments.size()];
         o.segmentMarkerList = new int[pslg.segments.size()];
         for (int i = 0; i < pslg.segments.size(); i++) {
-            int[] s = pslg.segments.get(i);
-            o.segmentList[2 * i] = s[0];
-            o.segmentList[2 * i + 1] = s[1];
-            o.segmentMarkerList[i] = s[2];
+            Constraint s = pslg.segments.get(i);
+            o.segmentList[2 * i] = s.a;
+            o.segmentList[2 * i + 1] = s.b;
+            o.segmentMarkerList[i] = s.marker;
         }
         return o;
     }
