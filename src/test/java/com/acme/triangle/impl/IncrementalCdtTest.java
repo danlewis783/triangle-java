@@ -28,9 +28,9 @@ class IncrementalCdtTest {
         List<DynamicTest> tests = new ArrayList<>();
         for (Scenario s : ScenarioFixtures.all()) {
             tests.add(dynamicTest(s.name, () -> {
-                TriangleMesherOutput base =
-                        ConstrainedDelaunayTriangulator.triangulate(s.input);
-                if (base.numberOfTriangles == 0) {
+                TriangleMesherOutput2 base =
+                        ConstrainedDelaunayTriangulator.triangulate(TriangleMesherInput2.from(s.input));
+                if (base.triangles.size() == 0) {
                     return;                         /* nothing to refine into */
                 }
 
@@ -45,7 +45,7 @@ class IncrementalCdtTest {
                 assertThat(mesh.adjacencyConsistent())
                         .as("maintained adjacency matches a rebuild for %s", s.name)
                         .isTrue();
-                TriangleMesherOutput out = mesh.toOutput();
+                TriangleMesherOutput out = mesh.toOutput().toFlat();
                 assertThat(MeshValidator.validate(out, structuralOnly(s.input)))
                         .as("incremental CDT valid for %s", s.name)
                         .isEmpty();
@@ -62,14 +62,14 @@ class IncrementalCdtTest {
         List<DynamicTest> tests = new ArrayList<>();
         for (Scenario s : ScenarioFixtures.all()) {
             tests.add(dynamicTest(s.name, () -> {
-                TriangleMesherOutput base =
-                        ConstrainedDelaunayTriangulator.triangulate(s.input);
-                if (base.numberOfTriangles == 0 || base.numberOfSegments == 0) {
+                TriangleMesherOutput2 base =
+                        ConstrainedDelaunayTriangulator.triangulate(TriangleMesherInput2.from(s.input));
+                if (base.triangles.size() == 0 || base.segments.size() == 0) {
                     return;
                 }
 
                 IncrementalCdt mesh = new IncrementalCdt(base);
-                int origSegs = base.numberOfSegments;
+                int origSegs = base.segments.size();
                 for (int i = 0; i < origSegs; i++) {
                     mesh.splitSegment(i);           /* index i stays the first half */
                 }
@@ -81,7 +81,7 @@ class IncrementalCdtTest {
                 assertThat(mesh.adjacencyConsistent())
                         .as("maintained adjacency matches a rebuild after splits for %s", s.name)
                         .isTrue();
-                TriangleMesherOutput out = mesh.toOutput();
+                TriangleMesherOutput out = mesh.toOutput().toFlat();
                 assertThat(MeshValidator.validate(out, structuralOnly(s.input)))
                         .as("incremental CDT valid after splits for %s", s.name)
                         .isEmpty();

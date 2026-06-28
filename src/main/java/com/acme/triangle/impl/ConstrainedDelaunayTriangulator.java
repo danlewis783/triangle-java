@@ -5,7 +5,6 @@ import com.acme.triangle.TriangleMesherOutput;
 import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -35,10 +34,10 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     public static TriangleMesherOutput triangulate(TriangleMesherInput in) {
-        return triangulate(TriangleMesherInput2.from(in));
+        return triangulate(TriangleMesherInput2.from(in)).toFlat();
     }
 
-    static TriangleMesherOutput triangulate(TriangleMesherInput2 in) {
+    static TriangleMesherOutput2 triangulate(TriangleMesherInput2 in) {
         /* 1. Split crossing segments. */
         Pslg pslg = splitIntersections(in);
         double[] pts = pslg.points;
@@ -377,9 +376,9 @@ public final class ConstrainedDelaunayTriangulator {
 
     /* --- output -------------------------------------------------------------- */
 
-    private static TriangleMesherOutput buildOutput(double[] pts, int np,
-                                                    List<Corners> tris, boolean[] removed,
-                                                    double @Nullable [] attr, Pslg pslg) {
+    private static TriangleMesherOutput2 buildOutput(double[] pts, int np,
+                                                     List<Corners> tris, boolean[] removed,
+                                                     double @Nullable [] attr, Pslg pslg) {
         List<Integer> keep = new ArrayList<>();
         for (int i = 0; i < tris.size(); i++) {
             if (!removed[i]) {
@@ -387,37 +386,46 @@ public final class ConstrainedDelaunayTriangulator {
             }
         }
         int t = keep.size();
-        TriangleMesherOutput o = new TriangleMesherOutput();
-        o.numberOfPoints = np;
-        o.pointList = Arrays.copyOf(pts, np * 2);
-        o.numberOfTriangles = t;
-        o.triangleList = new int[3 * t];
+
+        /* Corners of the kept triangles, then their adjacency over the compacted
+           indexing - assembled into the interleaved {@link Triangles} layout. */
+        int[] corner = new int[3 * t];
         for (int i = 0; i < t; i++) {
             Corners tr = tris.get(keep.get(i));
-            o.triangleList[3 * i] = tr.a;
-            o.triangleList[3 * i + 1] = tr.b;
-            o.triangleList[3 * i + 2] = tr.c;
+            corner[3 * i] = tr.a;
+            corner[3 * i + 1] = tr.b;
+            corner[3 * i + 2] = tr.c;
         }
+        double[] outAttr = null;
         if (attr != null) {
-            double[] outAttr = new double[t];
+            outAttr = new double[t];
             for (int i = 0; i < t; i++) {
                 outAttr[i] = attr[keep.get(i)];
             }
-            o.triangleAttributeList = outAttr;
         }
-        int[] tri = o.triangleList;
-        o.neighborList = Topology.neighbors(t, (i, c) -> tri[3 * i + c]);
+        int[] neigh = Topology.neighbors(t, (i, c) -> corner[3 * i + c]);
+        int[] triData = new int[6 * t];
+        for (int i = 0; i < t; i++) {
+            triData[6 * i] = corner[3 * i];
+            triData[6 * i + 1] = corner[3 * i + 1];
+            triData[6 * i + 2] = corner[3 * i + 2];
+            triData[6 * i + 3] = neigh[3 * i];
+            triData[6 * i + 4] = neigh[3 * i + 1];
+            triData[6 * i + 5] = neigh[3 * i + 2];
+        }
+        Triangles triangles = new Triangles(triData, outAttr, t);
 
-        o.numberOfSegments = pslg.segments.size();
-        o.segmentList = new int[2 * pslg.segments.size()];
-        o.segmentMarkerList = new int[pslg.segments.size()];
-        for (int i = 0; i < pslg.segments.size(); i++) {
-            Constraint s = pslg.segments.get(i);
-            o.segmentList[2 * i] = s.a;
-            o.segmentList[2 * i + 1] = s.b;
-            o.segmentMarkerList[i] = s.marker;
+        int s = pslg.segments.size();
+        int[] segData = new int[3 * s];
+        for (int i = 0; i < s; i++) {
+            Constraint c = pslg.segments.get(i);
+            segData[3 * i] = c.a;
+            segData[3 * i + 1] = c.b;
+            segData[3 * i + 2] = c.marker;
         }
-        return o;
+        Constraints segments = new Constraints(segData, s);
+
+        return new TriangleMesherOutput2(new Points(pts, np), triangles, segments);
     }
 
     /* --- geometry helpers ---------------------------------------------------- */

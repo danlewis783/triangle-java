@@ -53,19 +53,15 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        return meshFlat(TriangleMesherInput2.from(input));
+        return mesh(TriangleMesherInput2.from(input)).toFlat();
     }
 
     @Override
     public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
-        return TriangleMesherOutput2.from(meshFlat(input));
-    }
-
-    private TriangleMesherOutput meshFlat(TriangleMesherInput2 in) {
-        if (!needsRefinement(in)) {
-            return ConstrainedDelaunayTriangulator.triangulate(in);
+        if (!needsRefinement(input)) {
+            return ConstrainedDelaunayTriangulator.triangulate(input);
         }
-        return refine(in);
+        return refine(input);
     }
 
     private static boolean needsRefinement(TriangleMesherInput2 input) {
@@ -80,7 +76,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         return false;
     }
 
-    private TriangleMesherOutput refine(TriangleMesherInput2 input) {
+    private TriangleMesherOutput2 refine(TriangleMesherInput2 input) {
         double bound = input.minAngleDegrees;
         /* Below-bound test uses squared cosine vs cos^2(bound) - no trig per
            triangle (Triangle does the same, triangle.c:4036). */

@@ -2,46 +2,65 @@ package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesherOutput;
 
+/**
+ * Output of the Java meshing pipeline in the impl package's modelled form: a
+ * {@link Points} store, the {@link Triangles} (corners, neighbour links and
+ * optional region attributes), and the recovered {@link Constraints}
+ * subsegments. The pipeline ({@link ConstrainedDelaunayTriangulator} and {@link
+ * IncrementalCdt}) produces and threads this through directly; it is marshalled
+ * back to the flat public {@link TriangleMesherOutput} via {@link #toFlat} only
+ * at the {@link com.acme.triangle.TriangleMesher} boundary.
+ */
 final class TriangleMesherOutput2 {
 
     final Points points;
     final Triangles triangles;
     final Constraints segments;
 
-    public TriangleMesherOutput2(Points points, Triangles triangles, Constraints segments) {
+    TriangleMesherOutput2(Points points, Triangles triangles, Constraints segments) {
         this.points = points;
         this.triangles = triangles;
         this.segments = segments;
     }
 
-    /** Repack a flat {@link TriangleMesherOutput} into the modelled form. */
-    static TriangleMesherOutput2 from(TriangleMesherOutput o) {
-        Points points = new Points(o.pointList, o.numberOfPoints);
+    /** Marshal back to the flat public {@link TriangleMesherOutput} at the API
+        boundary - the inverse of repacking the input. */
+    TriangleMesherOutput toFlat() {
+        TriangleMesherOutput o = new TriangleMesherOutput();
+        o.numberOfPoints = points.size();
+        o.pointList = points.toArray();
 
-        int t = o.numberOfTriangles;
-        int[] triData = new int[6 * t];                /* a,b,c then n0,n1,n2 per triangle */
+        int t = triangles.size();
+        o.numberOfTriangles = t;
+        int[] tri = new int[3 * t];
+        int[] neigh = new int[3 * t];
+        double[] attr = triangles.hasAttributes() ? new double[t] : null;
         for (int i = 0; i < t; i++) {
-            triData[6 * i] = o.triangleList[3 * i];
-            triData[6 * i + 1] = o.triangleList[3 * i + 1];
-            triData[6 * i + 2] = o.triangleList[3 * i + 2];
-            triData[6 * i + 3] = o.neighborList[3 * i];
-            triData[6 * i + 4] = o.neighborList[3 * i + 1];
-            triData[6 * i + 5] = o.neighborList[3 * i + 2];
-        }
-        Triangles triangles = new Triangles(triData, o.triangleAttributeList, t);
-
-        int[] segList = o.segmentList, segMarkers = o.segmentMarkerList;
-        int s = segList == null ? 0 : o.numberOfSegments;
-        int[] segData = new int[3 * s];
-        if (segList != null) {
-            for (int i = 0; i < s; i++) {
-                segData[3 * i] = segList[2 * i];
-                segData[3 * i + 1] = segList[2 * i + 1];
-                segData[3 * i + 2] = segMarkers != null ? segMarkers[i] : 0;
+            tri[3 * i] = triangles.a(i);
+            tri[3 * i + 1] = triangles.b(i);
+            tri[3 * i + 2] = triangles.c(i);
+            neigh[3 * i] = triangles.n0(i);
+            neigh[3 * i + 1] = triangles.n1(i);
+            neigh[3 * i + 2] = triangles.n2(i);
+            if (attr != null) {
+                attr[i] = triangles.attr(i);
             }
         }
-        Constraints segments = new Constraints(segData, s);
+        o.triangleList = tri;
+        o.neighborList = neigh;
+        o.triangleAttributeList = attr;
 
-        return new TriangleMesherOutput2(points, triangles, segments);
+        int s = segments.size();
+        o.numberOfSegments = s;
+        int[] segList = new int[2 * s];
+        int[] segMarkers = new int[s];
+        for (int i = 0; i < s; i++) {
+            segList[2 * i] = segments.a(i);
+            segList[2 * i + 1] = segments.b(i);
+            segMarkers[i] = segments.marker(i);
+        }
+        o.segmentList = segList;
+        o.segmentMarkerList = segMarkers;
+        return o;
     }
 }

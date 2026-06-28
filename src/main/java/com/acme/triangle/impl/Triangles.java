@@ -59,6 +59,12 @@ final class Triangles {
         return data[6 * i + 5];
     }
 
+    /** Region attribute of triangle {@code i}, or {@code 0.0} when the mesh
+        carries no attributes (mirrors {@link #at}'s attribute). */
+    double attr(int i) {
+        return attr == null ? 0.0 : attr[i];
+    }
+
     Triangle at(int i) {
         return new Triangle(data[6 * i], data[6 * i + 1], data[6 * i + 2],
                 data[6 * i + 3], data[6 * i + 4], data[6 * i + 5],

@@ -1,6 +1,5 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.TriangleMesherOutput;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayDeque;
@@ -68,35 +67,28 @@ final class IncrementalCdt {
     private int[] cavityGen;
     private int gen;
 
-    IncrementalCdt(TriangleMesherOutput base) {
-        points = new Points(base.pointList, base.numberOfPoints);
-        for (int i = 0; i < base.numberOfPoints; i++) {
+    IncrementalCdt(TriangleMesherOutput2 base) {
+        /* Adopt the modelled stores the CDT just built and handed over (it is a
+           transient, used by nobody else): the growable Points becomes the mesh's
+           vertex store, and the Triangles already carry compacted neighbour links,
+           so construction relinks nothing - no from-scratch adjacency rebuild. */
+        points = base.points;
+        for (int i = 0; i < points.size(); i++) {
             provenances.add(new Provenance(VertexType.INPUT, -1, -1));
         }
-        double[] baseAttr = base.triangleAttributeList;
-        haveAttr = baseAttr != null;
-        for (int i = 0; i < base.numberOfTriangles; i++) {     /* corners now, links below */
-            double attr = baseAttr != null ? baseAttr[i] : 0.0;
-            tris.add(new Triangle(base.triangleList[3 * i], base.triangleList[3 * i + 1],
-                    base.triangleList[3 * i + 2], -1, -1, -1, attr));
+        Triangles bt = base.triangles;
+        haveAttr = bt.hasAttributes();
+        for (int i = 0; i < bt.size(); i++) {
+            tris.add(new Triangle(bt.a(i), bt.b(i), bt.c(i),
+                    bt.n0(i), bt.n1(i), bt.n2(i), bt.attr(i)));
         }
-        int[] adj = adjacency(tris);             /* one-time global build at construction */
-        for (int i = 0; i < base.numberOfTriangles; i++) {
-            Triangle t = tris.get(i);
-            t.n0 = adj[3 * i];
-            t.n1 = adj[3 * i + 1];
-            t.n2 = adj[3 * i + 2];
-        }
-        liveCount = base.numberOfTriangles;
+        liveCount = bt.size();
         cavityGen = new int[Math.max(16, tris.size())];
-        int[] segList = base.segmentList, segMarkers = base.segmentMarkerList;
-        if (segList != null) {
-            for (int i = 0; i < base.numberOfSegments; i++) {
-                int a = segList[2 * i], b = segList[2 * i + 1];
-                int marker = segMarkers != null ? segMarkers[i] : 0;
-                segments.add(new Segment(a, b, marker, a, b));   /* original endpoints = a, b */
-                segSet.add(key(a, b));
-            }
+        Constraints bs = base.segments;
+        for (int i = 0; i < bs.size(); i++) {
+            int a = bs.a(i), b = bs.b(i), marker = bs.marker(i);
+            segments.add(new Segment(a, b, marker, a, b));   /* original endpoints = a, b */
+            segSet.add(key(a, b));
         }
         for (int i = 0; i < tris.size(); i++) {            /* seed segment->triangle */
             Triangle t = tris.get(i);
@@ -459,10 +451,7 @@ final class IncrementalCdt {
         return tc.b != a && tc.b != b ? tc.b : tc.c;
     }
 
-    TriangleMesherOutput toOutput() {
-        TriangleMesherOutput o = new TriangleMesherOutput();
-        o.numberOfPoints = points.size();
-        o.pointList = points.toArray();
+    TriangleMesherOutput2 toOutput() {
         /* Compact live slots to contiguous output indices, remapping the
            maintained neighbour links through the same mapping. */
         int[] remap = new int[tris.size()];
@@ -473,38 +462,41 @@ final class IncrementalCdt {
                 remap[i] = nt++;
             }
         }
-        o.numberOfTriangles = nt;
-        o.triangleList = new int[3 * nt];
-        o.neighborList = new int[3 * nt];
+        int[] triData = new int[6 * nt];
         double[] outAttr = haveAttr ? new double[nt] : null;
-        o.triangleAttributeList = outAttr;
         for (int i = 0; i < tris.size(); i++) {
             Triangle tc = tris.get(i);
             if (tc == null) {
                 continue;
             }
             int ni = remap[i];
-            o.triangleList[3 * ni] = tc.a;
-            o.triangleList[3 * ni + 1] = tc.b;
-            o.triangleList[3 * ni + 2] = tc.c;
+            triData[6 * ni] = tc.a;
+            triData[6 * ni + 1] = tc.b;
+            triData[6 * ni + 2] = tc.c;
             for (int j = 0; j < 3; j++) {
                 int nb = tc.neighbor(j);
-                o.neighborList[3 * ni + j] = nb < 0 ? -1 : remap[nb];
+                triData[6 * ni + 3 + j] = nb < 0 ? -1 : remap[nb];
             }
             if (outAttr != null) {
                 outAttr[ni] = tc.attr;
             }
         }
-        o.numberOfSegments = segments.size();
-        o.segmentList = new int[2 * segments.size()];
-        o.segmentMarkerList = new int[segments.size()];
-        for (int i = 0; i < segments.size(); i++) {
-            Segment s = segments.get(i);
-            o.segmentList[2 * i] = s.a;
-            o.segmentList[2 * i + 1] = s.b;
-            o.segmentMarkerList[i] = s.marker;
+        Triangles triangles = new Triangles(triData, outAttr, nt);
+
+        int s = segments.size();
+        int[] segData = new int[3 * s];
+        for (int i = 0; i < s; i++) {
+            Segment sg = segments.get(i);
+            segData[3 * i] = sg.a;
+            segData[3 * i + 1] = sg.b;
+            segData[3 * i + 2] = sg.marker;
         }
-        return o;
+        Constraints outSegments = new Constraints(segData, s);
+
+        /* A fresh, tight copy of the live coordinates - the mesh keeps its own
+           growable store rather than handing out its mutable internals. */
+        Points outPoints = new Points(points.toArray(), points.size());
+        return new TriangleMesherOutput2(outPoints, triangles, outSegments);
     }
 
     /**
