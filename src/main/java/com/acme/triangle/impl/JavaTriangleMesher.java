@@ -138,7 +138,11 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                        requeue it (no-op if the split happened to destroy it). */
                     enqueueIfBad(bad, mesh, t, cosSqBound, maxAreaByAttr);
                 } else {
-                    mesh.insertInteriorPoint(centre);
+                    /* Seed the Bowyer-Watson cavity from t, the bad triangle whose
+                       off-centre this is: t holds the point in its circumcircle, so
+                       no O(T) point location is needed (the old per-insert locate
+                       scan made refinement O(T^2)). */
+                    mesh.insertInteriorPoint(centre, t);
                     enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
                 }
             }

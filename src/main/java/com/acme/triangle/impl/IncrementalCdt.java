@@ -144,7 +144,10 @@ final class IncrementalCdt {
 
     /**
      * Insert a point lying strictly inside the meshed domain (not on a segment)
-     * via constrained Bowyer-Watson.
+     * via constrained Bowyer-Watson, locating its containing triangle by a full
+     * scan. The refinement hot path uses {@link #insertInteriorPoint(Point, int)}
+     * instead, seeding from the triangle it already holds; this overload is for
+     * callers inserting an arbitrary interior point with no triangle in hand.
      *
      * @return the new vertex index
      */
@@ -153,9 +156,27 @@ final class IncrementalCdt {
         if (start < 0) {
             throw new IllegalArgumentException("point is not inside the domain");
         }
+        return insertInteriorPoint(p, start);
+    }
+
+    /**
+     * Insert an interior point via constrained Bowyer-Watson, seeding the cavity
+     * from {@code seedTriangle} - a triangle already known to hold {@code p} in
+     * its circumcircle - so no O(T) point location is needed (the prior linear
+     * {@code locate} scan per insertion made refinement O(T^2)). During
+     * refinement the seed is the bad triangle being split, whose
+     * circumcentre/off-centre {@code p} is, so it holds {@code p} in its
+     * circumcircle by construction. The Bowyer-Watson cavity is the connected set
+     * of triangles whose circumcircle contains {@code p}; flooding from any one
+     * member gathers all of it, so seeding from {@code seedTriangle} reaches the
+     * same cavity the containing triangle would.
+     *
+     * @return the new vertex index
+     */
+    int insertInteriorPoint(Point p, int seedTriangle) {
         int pIdx = points.add(p);
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
-        insertViaCavity(pIdx, new int[]{start}, -1L);
+        insertViaCavity(pIdx, new int[]{seedTriangle}, -1L);
         return pIdx;
     }
 
