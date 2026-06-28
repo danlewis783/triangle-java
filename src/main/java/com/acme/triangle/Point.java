@@ -1,4 +1,4 @@
-package com.acme.triangle.impl;
+package com.acme.triangle;
 
 /**
  * An immutable coordinate pair: a single location - a vertex's position, or a
@@ -6,12 +6,21 @@ package com.acme.triangle.impl;
  * (yet) a vertex. Bulk vertex coordinates live in {@link Points}; this is the
  * value type for an individual point.
  */
-final class Point {
+public final class Point {
 
-    final double x, y;
+    private final double x;
+    private final double y;
 
-    Point(double x, double y) {
+    public Point(double x, double y) {
         this.x = x;
         this.y = y;
+    }
+
+    public double getX() {
+        return x;
+    }
+
+    public double getY() {
+        return y;
     }
 }

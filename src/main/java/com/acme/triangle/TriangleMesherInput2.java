@@ -1,7 +1,5 @@
-package com.acme.triangle.impl;
+package com.acme.triangle;
 
-import com.acme.triangle.TriangleMesher;
-import com.acme.triangle.TriangleMesherInput;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -13,16 +11,16 @@ import java.util.List;
  * boundary; the Java meshing pipeline then operates on this instead of the flat
  * DTO. Empty lists stand in for "none", so nothing here is nullable.
  */
-final class TriangleMesherInput2 {
+public final class TriangleMesherInput2 {
 
-    final Points points;
-    final List<Constraint> segments;
-    final List<Point> holes;
-    final List<Region> regions;
-    final double minAngleDegrees;
-    final boolean quiet;
+    private final Points points;
+    private final List<Constraint> segments;
+    private final List<Point> holes;
+    private final List<Region> regions;
+    private final double minAngleDegrees;
+    private final boolean quiet;
 
-    TriangleMesherInput2(Points points, List<Constraint> segments, List<Point> holes,
+    public TriangleMesherInput2(Points points, List<Constraint> segments, List<Point> holes,
                          List<Region> regions, double minAngleDegrees, boolean quiet) {
         this.points = points;
         this.segments = segments;
@@ -32,12 +30,37 @@ final class TriangleMesherInput2 {
         this.quiet = quiet;
     }
 
+    public Points getPoints() {
+        return points;
+    }
+
+    public List<Constraint> getSegments() {
+        return segments;
+    }
+
+    public List<Point> getHoles() {
+        return holes;
+    }
+
+    public List<Region> getRegions() {
+        return regions;
+    }
+
+    public double getMinAngleDegrees() {
+        return minAngleDegrees;
+    }
+
+    public boolean isQuiet() {
+        return quiet;
+    }
+
     /** Repack a public {@link TriangleMesherInput} into the modelled form. */
-    static TriangleMesherInput2 from(TriangleMesherInput in) {
+    public static TriangleMesherInput2 from(TriangleMesherInput in) {
         Points points = new Points(in.pointList, in.numberOfPoints);
 
         List<Constraint> segments = new ArrayList<>();
-        int[] segList = in.segmentList, segMarkers = in.segmentMarkerList;
+        int[] segList = in.segmentList;
+        int[] segMarkers = in.segmentMarkerList;
         if (segList != null) {
             for (int i = 0; i < in.numberOfSegments; i++) {
                 int marker = segMarkers != null ? segMarkers[i] : 0;
@@ -62,7 +85,6 @@ final class TriangleMesherInput2 {
             }
         }
 
-        return new TriangleMesherInput2(points, segments, holes, regions,
-                in.minAngleDegrees, in.quiet);
+        return new TriangleMesherInput2(points, segments, holes, regions, in.minAngleDegrees, in.quiet);
     }
 }

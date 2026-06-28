@@ -7,6 +7,10 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import com.acme.triangle.Point;
+import com.acme.triangle.Points;
+import com.acme.triangle.Triangle;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -101,8 +105,8 @@ public final class DelaunayTriangulator {
             /* Keep the triangles not incident to a super-triangle vertex. */
             List<Corners> kept = new ArrayList<>();
             for (Triangle t : tris) {
-                if (t != null && t.a < n && t.b < n && t.c < n) {
-                    kept.add(new Corners(t.a, t.b, t.c));
+                if (t != null && t.getA() < n && t.getB() < n && t.getC() < n) {
+                    kept.add(new Corners(t.getA(), t.getB(), t.getC()));
                 }
             }
             return kept;
@@ -171,14 +175,14 @@ public final class DelaunayTriangulator {
                 }
                 Integer mu = asW.get(u);
                 if (mu != null) {                         /* shares the (p,u) edge */
-                    tris.get(id).n1 = mu;
-                    tris.get(mu).n0 = id;
+                    tris.get(id).setN1(mu);
+                    tris.get(mu).setN0(id);
                 }
                 asU.put(u, id);
                 Integer mw = asU.get(w);
                 if (mw != null) {                         /* shares the (w,p) edge */
-                    tris.get(id).n0 = mw;
-                    tris.get(mw).n1 = id;
+                    tris.get(id).setN0(mw);
+                    tris.get(mw).setN1(id);
                 }
                 asW.put(w, id);
             }
@@ -220,8 +224,8 @@ public final class DelaunayTriangulator {
         private int locateByScan(Point pt) {
             for (int i = 0; i < tris.size(); i++) {
                 Triangle t = tris.get(i);
-                if (t != null && orient(t.a, t.b, pt) >= 0
-                        && orient(t.b, t.c, pt) >= 0 && orient(t.c, t.a, pt) >= 0) {
+                if (t != null && orient(t.getA(), t.getB(), pt) >= 0
+                        && orient(t.getB(), t.getC(), pt) >= 0 && orient(t.getC(), t.getA(), pt) >= 0) {
                     return i;
                 }
             }
@@ -255,11 +259,11 @@ public final class DelaunayTriangulator {
         }
 
         private boolean inCircle(Triangle t, Point p) {
-            return Geometry.inCircle(pts, t.a, t.b, t.c, p);
+            return Geometry.inCircle(pts, t.getA(), t.getB(), t.getC(), p);
         }
 
         private int orient(int a, int b, Point p) {
-            return Geometry.orient2d(pts, a, b, p.x, p.y);
+            return Geometry.orient2d(pts, a, b, p.getX(), p.getY());
         }
 
         /* --- Hilbert-curve insertion order ----------------------------------- */

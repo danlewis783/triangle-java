@@ -1,11 +1,18 @@
 package com.acme.triangle.impl;
 
+import com.acme.triangle.Constraint;
+import com.acme.triangle.DefaultImmutableTriangle;
+import com.acme.triangle.ImmutableTriangle;
+import com.acme.triangle.Point;
+import com.acme.triangle.Points;
+import com.acme.triangle.Region;
 import com.acme.triangle.TriangleMesherInput;
+import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
+import com.acme.triangle.TriangleMesherOutput2;
 import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -52,11 +59,11 @@ public final class ConstrainedDelaunayTriangulator {
            maintained-adjacency arena. */
         CdtMesh mesh = new CdtMesh(pts, tris);
         for (Constraint s : pslg.segments) {
-            mesh.recoverSegment(s.a, s.b);
+            mesh.recoverSegment(s.getA(), s.getB());
         }
         mesh.restoreDelaunay();
-        boolean[] removed = mesh.carve(in.holes);
-        double[] attr = mesh.attributeRegions(removed, in.regions);
+        boolean[] removed = mesh.carve(in.getHoles());
+        double[] attr = mesh.attributeRegions(removed, in.getRegions());
 
         return mesh.buildOutput(removed, attr, pslg);
     }
@@ -86,8 +93,8 @@ public final class ConstrainedDelaunayTriangulator {
     private static Pslg splitIntersections(TriangleMesherInput2 in) {
         /* Growable working copy: intersection points are appended as crossings
            are resolved (the input store must not be mutated). */
-        Points pts = new Points(in.points.toArray(), in.points.size());
-        List<Constraint> segs = new ArrayList<>(in.segments);
+        Points pts = new Points(in.getPoints().toArray(), in.getPoints().size());
+        List<Constraint> segs = new ArrayList<>(in.getSegments());
 
         boolean changed = true;
         while (changed) {
@@ -101,12 +108,12 @@ public final class ConstrainedDelaunayTriangulator {
                     if (share(a, b)) {
                         continue;
                     }
-                    if (cross(pts, a.a, a.b, b.a, b.b)) {
-                        int c = pts.add(intersection(pts, a.a, a.b, b.a, b.b));
-                        segs.set(i, new Constraint(a.a, c, a.marker));
-                        segs.set(j, new Constraint(b.a, c, b.marker));
-                        segs.add(new Constraint(c, a.b, a.marker));
-                        segs.add(new Constraint(c, b.b, b.marker));
+                    if (cross(pts, a.getA(), a.getB(), b.getA(), b.getB())) {
+                        int c = pts.add(intersection(pts, a.getA(), a.getB(), b.getA(), b.getB()));
+                        segs.set(i, new Constraint(a.getA(), c, a.getMarker()));
+                        segs.set(j, new Constraint(b.getA(), c, b.getMarker()));
+                        segs.add(new Constraint(c, a.getB(), a.getMarker()));
+                        segs.add(new Constraint(c, b.getB(), b.getMarker()));
                         changed = true;
                         break crossings;
                     }
@@ -123,9 +130,9 @@ public final class ConstrainedDelaunayTriangulator {
             for (int i = 0; i < segs.size(); i++) {
                 Constraint s = segs.get(i);
                 for (int v = 0; v < pts.size(); v++) {
-                    if (v != s.a && v != s.b && onSegmentInterior(pts, s.a, s.b, v)) {
-                        segs.set(i, new Constraint(s.a, v, s.marker));
-                        segs.add(new Constraint(v, s.b, s.marker));
+                    if (v != s.getA() && v != s.getB() && onSegmentInterior(pts, s.getA(), s.getB(), v)) {
+                        segs.set(i, new Constraint(s.getA(), v, s.getMarker()));
+                        segs.add(new Constraint(v, s.getB(), s.getMarker()));
                         changed = true;
                         break onEdge;
                     }
@@ -137,7 +144,7 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     private static boolean share(Constraint a, Constraint b) {
-        return a.a == b.a || a.a == b.b || a.b == b.a || a.b == b.b;
+        return a.getA() == b.getA() || a.getA() == b.getB() || a.getB() == b.getA() || a.getB() == b.getB();
     }
 
     /** True if vertex v is exactly collinear with (a,b) and strictly between them. */
@@ -514,7 +521,7 @@ public final class ConstrainedDelaunayTriangulator {
             }
             /* Seed: triangle containing each hole point. */
             for (Point h : holes) {
-                int t = locate(h.x, h.y);
+                int t = locate(h.getX(), h.getY());
                 if (t >= 0 && !removed[t]) {
                     removed[t] = true;
                     queue.add(t);
@@ -539,7 +546,7 @@ public final class ConstrainedDelaunayTriangulator {
             }
             double[] attr = new double[nt];
             for (Region region : regions) {
-                int start = locate(region.site.x, region.site.y);
+                int start = locate(region.getSite().getX(), region.getSite().getY());
                 if (start < 0 || removed[start]) {
                     continue;
                 }
@@ -549,7 +556,7 @@ public final class ConstrainedDelaunayTriangulator {
                 queue.add(start);
                 while (!queue.isEmpty()) {
                     int t = queue.poll();
-                    attr[t] = region.attribute;
+                    attr[t] = region.getAttribute();
                     for (int j = 0; j < 3; j++) {
                         int nb = nbr[3 * t + j];
                         if (nb >= 0 && !removed[nb] && !seen[nb] && !isSegmentEdge(t, j)) {
@@ -581,37 +588,21 @@ public final class ConstrainedDelaunayTriangulator {
         /* --- output ---------------------------------------------------------- */
 
         TriangleMesherOutput2 buildOutput(boolean[] removed, double @Nullable [] attr, Pslg pslg) {
-            int[] remap = new int[nt];
-            Arrays.fill(remap, -1);
-            int t = 0;
+            /* One cell per slot, null where carved away, each carrying its neighbour
+               ids in slot indexing; TriangleUtils.compact drops the dead slots and
+               remaps the neighbours (a neighbour pointing at a carved slot collapses
+               to a boundary, since that slot's remap entry stays -1). */
+            List<@Nullable ImmutableTriangle> slots = new ArrayList<>(nt);
             for (int i = 0; i < nt; i++) {
-                if (!removed[i]) {
-                    remap[i] = t++;
-                }
+                slots.add(removed[i] ? null : new DefaultImmutableTriangle(
+                        cor[3 * i], cor[3 * i + 1], cor[3 * i + 2],
+                        nbr[3 * i], nbr[3 * i + 1], nbr[3 * i + 2],
+                        attr != null ? attr[i] : 0.0));
             }
-            int[] triData = new int[6 * t];
-            double[] outAttr = attr != null ? new double[t] : null;
-            for (int i = 0; i < nt; i++) {
-                if (removed[i]) {
-                    continue;
-                }
-                int ni = remap[i];
-                triData[6 * ni] = cor[3 * i];
-                triData[6 * ni + 1] = cor[3 * i + 1];
-                triData[6 * ni + 2] = cor[3 * i + 2];
-                for (int j = 0; j < 3; j++) {
-                    int nb = nbr[3 * i + j];
-                    triData[6 * ni + 3 + j] = (nb < 0 || removed[nb]) ? -1 : remap[nb];
-                }
-                if (outAttr != null && attr != null) {
-                    outAttr[ni] = attr[i];
-                }
-            }
-            Triangles triangles = new Triangles(triData, outAttr, t);
 
             /* The PSLG is single-use (discarded after this), so the output adopts its
                point store and recovered subsegment list directly rather than copying. */
-            return new TriangleMesherOutput2(pslg.points, triangles, pslg.segments);
+            return new TriangleMesherOutput2(pslg.points, TriangleUtils.compact(slots), pslg.segments, attr != null);
         }
     }
 

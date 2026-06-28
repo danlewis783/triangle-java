@@ -1,6 +1,6 @@
-package com.acme.triangle.impl;
+package com.acme.triangle;
 
-interface TriangleMesher2 {
+public interface TriangleMesher2 {
 
     TriangleMesherOutput2 mesh(TriangleMesherInput2 input);
 }

@@ -1,5 +1,7 @@
 package com.acme.triangle.impl;
 
+import com.acme.triangle.Triangle;
+
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;

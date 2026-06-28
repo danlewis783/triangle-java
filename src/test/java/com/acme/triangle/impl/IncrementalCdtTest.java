@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
 import com.acme.triangle.TriangleMesherInput;
+import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
+import com.acme.triangle.TriangleMesherOutput2;
 import com.acme.triangle.contract.MeshValidator;
 import com.acme.triangle.contract.ScenarioFixtures;
 import com.acme.triangle.contract.ScenarioFixtures.Scenario;
@@ -30,7 +32,7 @@ class IncrementalCdtTest {
             tests.add(dynamicTest(s.name, () -> {
                 TriangleMesherOutput2 base =
                         ConstrainedDelaunayTriangulator.triangulate(TriangleMesherInput2.from(s.input));
-                if (base.triangles.size() == 0) {
+                if (base.getTriangles().size() == 0) {
                     return;                         /* nothing to refine into */
                 }
 
@@ -64,12 +66,12 @@ class IncrementalCdtTest {
             tests.add(dynamicTest(s.name, () -> {
                 TriangleMesherOutput2 base =
                         ConstrainedDelaunayTriangulator.triangulate(TriangleMesherInput2.from(s.input));
-                if (base.triangles.size() == 0 || base.segments.size() == 0) {
+                if (base.getTriangles().size() == 0 || base.getSegments().isEmpty()) {
                     return;
                 }
 
                 IncrementalCdt mesh = new IncrementalCdt(base);
-                int origSegs = base.segments.size();
+                int origSegs = base.getSegments().size();
                 for (int i = 0; i < origSegs; i++) {
                     mesh.splitSegment(i);           /* index i stays the first half */
                 }

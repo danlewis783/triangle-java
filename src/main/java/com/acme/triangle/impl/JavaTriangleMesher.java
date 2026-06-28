@@ -1,9 +1,17 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.MeshContractException;
+import com.acme.triangle.Point;
+import com.acme.triangle.Points;
+import com.acme.triangle.Region;
+import com.acme.triangle.Triangle;
 import com.acme.triangle.TriangleMesher;
+import com.acme.triangle.TriangleMesher2;
 import com.acme.triangle.TriangleMesherInput;
+import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
+import com.acme.triangle.TriangleMesherOutput2;
+
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -65,11 +73,11 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     }
 
     private static boolean needsRefinement(TriangleMesherInput2 input) {
-        if (input.minAngleDegrees > 0) {
+        if (input.getMinAngleDegrees() > 0) {
             return true;
         }
-        for (Region r : input.regions) {
-            if (r.maxArea > 0) {                               /* a region max area */
+        for (Region r : input.getRegions()) {
+            if (r.getMaxArea() > 0) {                               /* a region max area */
                 return true;
             }
         }
@@ -77,15 +85,15 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     }
 
     private TriangleMesherOutput2 refine(TriangleMesherInput2 input) {
-        double bound = input.minAngleDegrees;
+        double bound = input.getMinAngleDegrees();
         /* Below-bound test uses squared cosine vs cos^2(bound) - no trig per
            triangle (Triangle does the same, triangle.c:4036). */
         double cosBound = Math.cos(Math.toRadians(bound));
         double cosSqBound = cosBound * cosBound;
         Map<Double, Double> maxAreaByAttr = new HashMap<>();
-        for (Region r : input.regions) {
-            if (r.maxArea > 0) {
-                maxAreaByAttr.put(r.attribute, r.maxArea);
+        for (Region r : input.getRegions()) {
+            if (r.getMaxArea() > 0) {
+                maxAreaByAttr.put(r.getAttribute(), r.getMaxArea());
             }
         }
 
@@ -109,7 +117,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
             }
         }
 
-        int maxVertices = Math.max(input.points.size() * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
+        int maxVertices = Math.max(input.getPoints().size() * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
         while (true) {
             /* Live views, re-fetched each iteration: with maintained adjacency
                these are stable lists mutated in place (dead triangles appear as
@@ -184,11 +192,11 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
             return;
         }
         Points points = mesh.pointsView();
-        int ia = tc.a, ib = tc.b, ic = tc.c;
+        int ia = tc.getA(), ib = tc.getB(), ic = tc.getC();
         Point a = points.at(ia), b = points.at(ib), c = points.at(ic);
         boolean isBad = false;
         if (!maxAreaByAttr.isEmpty() && mesh.hasAttributes()) {
-            Double maxArea = maxAreaByAttr.get(tc.attr);
+            Double maxArea = maxAreaByAttr.get(tc.getAttr());
             isBad = maxArea != null && triangleArea(a, b, c) > maxArea;
         }
         if (!isBad) {
@@ -229,9 +237,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     /** Whether {@code tc} has exactly the corner set {a, b, c} (the corners are
         distinct, so containment in both directions reduces to this). */
     private static boolean sameCorners(Triangle tc, int a, int b, int c) {
-        return (tc.a == a || tc.b == a || tc.c == a)
-                && (tc.a == b || tc.b == b || tc.c == b)
-                && (tc.a == c || tc.b == c || tc.c == c);
+        return (tc.getA() == a || tc.getB() == a || tc.getC() == a)
+                && (tc.getA() == b || tc.getB() == b || tc.getC() == b)
+                && (tc.getA() == c || tc.getB() == c || tc.getC() == c);
     }
 
     /**
@@ -243,9 +251,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
      */
     private static boolean belowAngleBound(Point a, Point b, Point c,
                                            double cosSqBound) {
-        double dxod = b.x - a.x, dyod = b.y - a.y;
-        double dxda = c.x - b.x, dyda = c.y - b.y;
-        double dxao = c.x - a.x, dyao = c.y - a.y;
+        double dxod = b.getX() - a.getX(), dyod = b.getY() - a.getY();
+        double dxda = c.getX() - b.getX(), dyda = c.getY() - b.getY();
+        double dxao = c.getX() - a.getX(), dyao = c.getY() - a.getY();
         double apexlen = dxod * dxod + dyod * dyod;        /* |a-b|^2, opposite c */
         double orglen = dxda * dxda + dyda * dyda;          /* |b-c|^2, opposite a */
         double destlen = dxao * dxao + dyao * dyao;         /* |a-c|^2, opposite b */
@@ -312,7 +320,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     }
 
     private static double triangleArea(Point a, Point b, Point c) {
-        return Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x))
+        return Math.abs((b.getX() - a.getX()) * (c.getY() - a.getY()) - (b.getY() - a.getY()) * (c.getX() - a.getX()))
                 / 2.0;
     }
 
@@ -328,7 +336,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     private static Point offCentre(List<Triangle> tris, Points points,
                                    int t, double boundDegrees) {
         Triangle tc = tris.get(t);
-        Point a = points.at(tc.a), b = points.at(tc.b), c = points.at(tc.c);
+        Point a = points.at(tc.getA()), b = points.at(tc.getB()), c = points.at(tc.getC());
 
         Point p, q, r;                             /* p,q = shortest edge; r = apex */
         double ab = dist2(a, b), bc = dist2(b, c), ca = dist2(c, a);
@@ -341,15 +349,15 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         }
 
         double e = Math.sqrt(dist2(p, q));
-        double mx = (p.x + q.x) / 2.0, my = (p.y + q.y) / 2.0;
-        double nx = -(q.y - p.y), ny = q.x - p.x;       /* perpendicular to pq */
+        double mx = (p.getX() + q.getX()) / 2.0, my = (p.getY() + q.getY()) / 2.0;
+        double nx = -(q.getY() - p.getY()), ny = q.getX() - p.getX();       /* perpendicular to pq */
         double nlen = Math.hypot(nx, ny);
         if (nlen == 0) {
             return circumcentre(tris, points, t);
         }
         nx /= nlen;
         ny /= nlen;
-        if ((r.x - mx) * nx + (r.y - my) * ny < 0) {    /* orient toward apex */
+        if ((r.getX() - mx) * nx + (r.getY() - my) * ny < 0) {    /* orient toward apex */
             nx = -nx;
             ny = -ny;
         }
@@ -367,7 +375,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         double h = e * (beta + Math.sqrt(radicand));
 
         Point cc = circumcentre(tris, points, t);
-        double dc = Math.hypot(cc.x - mx, cc.y - my);
+        double dc = Math.hypot(cc.getX() - mx, cc.getY() - my);
         if (dc > 0 && !Double.isNaN(dc) && !Double.isInfinite(dc) && h > dc) {
             h = dc;                                /* don't overshoot the circumcentre */
         }
@@ -375,7 +383,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     }
 
     private static double dist2(Point a, Point b) {
-        double dx = a.x - b.x, dy = a.y - b.y;
+        double dx = a.getX() - b.getX(), dy = a.getY() - b.getY();
         return dx * dx + dy * dy;
     }
 
@@ -386,9 +394,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
 
     private static Point circumcentre(List<Triangle> tris, Points points, int t) {
         Triangle tc = tris.get(t);
-        double ax = points.x(tc.a), ay = points.y(tc.a);
-        double bx = points.x(tc.b), by = points.y(tc.b);
-        double cx = points.x(tc.c), cy = points.y(tc.c);
+        double ax = points.x(tc.getA()), ay = points.y(tc.getA());
+        double bx = points.x(tc.getB()), by = points.y(tc.getB());
+        double cx = points.x(tc.getC()), cy = points.y(tc.getC());
         double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
         double a2 = ax * ax + ay * ay;
         double b2 = bx * bx + by * by;
