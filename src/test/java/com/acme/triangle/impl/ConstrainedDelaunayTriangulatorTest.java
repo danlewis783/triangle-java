@@ -108,6 +108,39 @@ class ConstrainedDelaunayTriangulatorTest {
                 .as("stress CDT contract violations").isEmpty();
     }
 
+    /**
+     * The square's two diagonals cross at its centre and are each collinear with
+     * the opposite corner. After the crossing is split, each half-diagonal is a
+     * constraint whose supporting line passes through that corner - a degeneracy
+     * that stalls the local channel walk, so recovery falls back to a global seed.
+     * The mesh must still be contract-valid (recovery does not silently fail).
+     */
+    @Test
+    void recoversCollinearCrossingDiagonals() {
+        Random rng = new Random(42);
+        int interior = 400;
+        int total = 4 + interior;
+        double[] pts = new double[2 * total];
+        pts[0] = 0; pts[1] = 0; pts[2] = 1; pts[3] = 0;
+        pts[4] = 1; pts[5] = 1; pts[6] = 0; pts[7] = 1;
+        for (int i = 4; i < total; i++) {
+            pts[2 * i] = 0.02 + 0.96 * rng.nextDouble();
+            pts[2 * i + 1] = 0.02 + 0.96 * rng.nextDouble();
+        }
+        TriangleMesherInput in = new TriangleMesherInput();
+        in.pointList = pts;
+        in.numberOfPoints = total;
+        in.segmentList = new int[]{0, 1, 1, 2, 2, 3, 3, 0, 0, 2, 1, 3};  // box + both diagonals
+        in.segmentMarkerList = new int[]{1, 1, 1, 1, 2, 2};
+        in.numberOfSegments = 6;
+        in.quiet = true;
+
+        TriangleMesherOutput o = ConstrainedDelaunayTriangulator.triangulate(in);
+
+        assertThat(MeshValidator.validate(o, in))
+                .as("collinear crossing-diagonal CDT violations").isEmpty();
+    }
+
     private static boolean hasOutputSegment(TriangleMesherOutput o, int a, int b) {
         for (int i = 0; i < o.numberOfSegments; i++) {
             int u = o.segmentList[2 * i], w = o.segmentList[2 * i + 1];
