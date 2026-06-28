@@ -31,7 +31,7 @@ import java.util.PriorityQueue;
  * assumes the input segments do not cross each other (true for quality inputs
  * here); the constrained-Delaunay step handles crossings for the unrefined case.
  */
-public final class JavaTriangleMesher implements TriangleMesher {
+public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2 {
 
     /** Off-centre placement aims this many degrees above the requested bound so
         new triangles clear the threshold rather than sitting exactly on it. */
@@ -53,7 +53,15 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        TriangleMesherInput2 in = TriangleMesherInput2.from(input);
+        return meshFlat(TriangleMesherInput2.from(input));
+    }
+
+    @Override
+    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
+        return TriangleMesherOutput2.from(meshFlat(input));
+    }
+
+    private TriangleMesherOutput meshFlat(TriangleMesherInput2 in) {
         if (!needsRefinement(in)) {
             return ConstrainedDelaunayTriangulator.triangulate(in);
         }
