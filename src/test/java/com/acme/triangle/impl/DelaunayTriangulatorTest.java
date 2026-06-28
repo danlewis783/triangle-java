@@ -3,6 +3,7 @@ package com.acme.triangle.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
+import com.acme.triangle.Points;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.contract.MeshValidator;

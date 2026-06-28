@@ -1,4 +1,4 @@
-package com.acme.triangle.impl;
+package com.acme.triangle;
 
 import java.util.Arrays;
 
@@ -13,37 +13,37 @@ import java.util.Arrays;
  * {@link #at} materializes a {@link Point} only where an individual value is
  * wanted, at the warm edges. Append-only: a vertex never moves once placed.
  */
-final class Points {
+public final class Points {
 
     private double[] xy;
     private int size;
 
     /** Adopt the first {@code n} vertices from a flat interleaved array, with
         room to grow. */
-    Points(double[] flat, int n) {
+    public Points(double[] flat, int n) {
         xy = Arrays.copyOf(flat, 2 * Math.max(16, n));
         size = n;
     }
 
-    int size() {
+    public int size() {
         return size;
     }
 
-    double x(int i) {
+    public double x(int i) {
         return xy[2 * i];
     }
 
-    double y(int i) {
+    public double y(int i) {
         return xy[2 * i + 1];
     }
 
     /** The vertex at {@code i} as a value (allocates - for warm/edge use). */
-    Point at(int i) {
+    public Point at(int i) {
         return new Point(xy[2 * i], xy[2 * i + 1]);
     }
 
     /** Append a vertex, returning its index. */
-    int add(double px, double py) {
+    public int add(double px, double py) {
         if (2 * (size + 1) > xy.length) {
             xy = Arrays.copyOf(xy, xy.length * 2);   /* geometric growth, as ensureCavityGen */
         }
@@ -53,12 +53,12 @@ final class Points {
         return i;
     }
 
-    int add(Point p) {
-        return add(p.x, p.y);
+    public int add(Point p) {
+        return add(p.getX(), p.getY());
     }
 
     /** A tight flat copy of the live coordinates, for the output mesh. */
-    double[] toArray() {
+    public double[] toArray() {
         return Arrays.copyOf(xy, 2 * size);
     }
 }

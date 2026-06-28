@@ -1,5 +1,7 @@
 package com.acme.triangle.impl;
 
+import com.acme.triangle.Point;
+import com.acme.triangle.Points;
 import com.acme.triangle.predicate.Predicates;
 
 /**
@@ -34,7 +36,7 @@ final class Geometry {
                 points.x(a), points.y(a),
                 points.x(b), points.y(b),
                 points.x(c), points.y(c),
-                p.x, p.y) > 0;
+                p.getX(), p.getY()) > 0;
     }
 
     /** Whether vertex {@code d} lies inside the circumcircle of CCW triangle {@code t}. */

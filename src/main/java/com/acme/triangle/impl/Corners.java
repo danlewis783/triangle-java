@@ -1,5 +1,7 @@
 package com.acme.triangle.impl;
 
+import com.acme.triangle.Triangle;
+
 /**
  * The three CCW corner vertex indices of a triangle during the construction
  * phase - the initial Delaunay ({@link DelaunayTriangulator}) and constraint

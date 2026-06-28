@@ -68,6 +68,35 @@ class JavaTriangleMesherTest {
     }
 
     @Test
+    void enforcesRegionalMaxAreaWhenAttributeIsZero() {
+        /* Regression: a region whose attribute is exactly 0.0, with a per-region
+           max-area bound and no angle bound (so area is the only refinement
+           trigger). "Has region attributes" must be carried structurally - regions
+           were supplied - not inferred from a non-zero attribute value. Inferring
+           it reads the all-zero attribute column as "no attributes" and silently
+           skips the area refinement, leaving the square's two half-unit triangles
+           well above the 0.05 bound. */
+        TriangleMesherInput in = new TriangleMesherInput();
+        in.pointList = new double[]{0, 0, 1, 0, 1, 1, 0, 1};
+        in.numberOfPoints = 4;
+        in.segmentList = new int[]{0, 1, 1, 2, 2, 3, 3, 0};
+        in.segmentMarkerList = new int[]{1, 1, 1, 1};
+        in.numberOfSegments = 4;
+        in.regionList = new double[]{0.5, 0.5, 0.0, 0.05};   /* attribute 0.0, max area 0.05 */
+        in.numberOfRegions = 1;
+        in.quiet = true;
+
+        TriangleMesherOutput o = mesher.mesh(in);
+
+        assertThat(o.numberOfTriangles)
+                .as("area refinement split the square below the 0.05 bound")
+                .isGreaterThan(2);
+        assertThat(MeshValidator.validate(o, in))
+                .as("zero-attribute region max-area violations")
+                .isEmpty();
+    }
+
+    @Test
     void refinesAFacetedHoleAtAHighAngleBound() {
         /* A finely-faceted hole at a high angle bound is the case that made plain
            refinement cascade without terminating. Concentric-shell segment
