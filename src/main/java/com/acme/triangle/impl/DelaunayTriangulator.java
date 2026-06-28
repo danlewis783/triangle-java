@@ -1,7 +1,6 @@
 package com.acme.triangle.impl;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -31,20 +30,21 @@ public final class DelaunayTriangulator {
     }
 
     /**
-     * @param points    interleaved coordinates {@code x0,y0,x1,y1,...}
-     * @param numPoints number of points (indices 0..numPoints-1)
+     * @param points the input vertex store; indices {@code 0..size-1} address it
      * @return the Delaunay triangles as CCW {@link Corners} over the input
      *         points (a fresh, mutable list the caller may refine in place)
      */
-    public static List<Corners> triangulate(double[] points, int numPoints) {
+    public static List<Corners> triangulate(Points points) {
+        int numPoints = points.size();
         if (numPoints < 3) {
             throw new IllegalArgumentException("need at least 3 points");
         }
-        /* Working coordinates: the input points plus three super-triangle
-           vertices large enough to contain them all. */
-        double[] pts = Arrays.copyOf(points, (numPoints + 3) * 2);
+        /* Working store: a copy of the input points (the caller's must not be
+           mutated) plus three super-triangle vertices large enough to contain
+           them all, appended at indices numPoints, numPoints+1, numPoints+2. */
+        Points pts = new Points(points.toArray(), numPoints);
         int sa = numPoints, sb = numPoints + 1, sc = numPoints + 2;
-        addSuperTriangle(pts, numPoints, sa, sb, sc);
+        addSuperTriangle(pts, numPoints);
 
         List<Corners> triangles = new ArrayList<>();
         triangles.add(ccw(pts, sa, sb, sc));
@@ -63,7 +63,7 @@ public final class DelaunayTriangulator {
         return kept;
     }
 
-    private static void insert(double[] pts, List<Corners> triangles, int p) {
+    private static void insert(Points pts, List<Corners> triangles, int p) {
         List<Corners> survivors = new ArrayList<>();
         List<Corners> cavity = new ArrayList<>();
         for (Corners t : triangles) {
@@ -91,7 +91,7 @@ public final class DelaunayTriangulator {
     }
 
     /** If (a,b) is a boundary edge, add the new triangle joining it to p (CCW). */
-    private static void connect(double[] pts, List<Corners> out, Set<Long> cavityEdges,
+    private static void connect(Points pts, List<Corners> out, Set<Long> cavityEdges,
                                 int a, int b, int p) {
         if (cavityEdges.contains(directed(b, a))) {
             return;                                 /* interior cavity edge */
@@ -105,13 +105,15 @@ public final class DelaunayTriangulator {
         /* s == 0: p collinear with the boundary edge - degenerate, skip. */
     }
 
-    private static void addSuperTriangle(double[] pts, int n, int sa, int sb, int sc) {
-        double minx = pts[0], miny = pts[1], maxx = pts[0], maxy = pts[1];
+    /** Append three super-triangle vertices enclosing the first {@code n} points,
+        landing at indices {@code n}, {@code n+1}, {@code n+2}. */
+    private static void addSuperTriangle(Points pts, int n) {
+        double minx = pts.x(0), miny = pts.y(0), maxx = pts.x(0), maxy = pts.y(0);
         for (int i = 1; i < n; i++) {
-            minx = Math.min(minx, pts[2 * i]);
-            maxx = Math.max(maxx, pts[2 * i]);
-            miny = Math.min(miny, pts[2 * i + 1]);
-            maxy = Math.max(maxy, pts[2 * i + 1]);
+            minx = Math.min(minx, pts.x(i));
+            maxx = Math.max(maxx, pts.x(i));
+            miny = Math.min(miny, pts.y(i));
+            maxy = Math.max(maxy, pts.y(i));
         }
         double d = Math.max(maxx - minx, maxy - miny);
         if (d <= 0) {
@@ -119,12 +121,12 @@ public final class DelaunayTriangulator {
         }
         double m = 1000 * d;
         double cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
-        pts[2 * sa] = cx - m;     pts[2 * sa + 1] = cy - m;
-        pts[2 * sb] = cx + m;     pts[2 * sb + 1] = cy - m;
-        pts[2 * sc] = cx;         pts[2 * sc + 1] = cy + m;
+        pts.add(cx - m, cy - m);
+        pts.add(cx + m, cy - m);
+        pts.add(cx, cy + m);
     }
 
-    private static Corners ccw(double[] pts, int a, int b, int c) {
+    private static Corners ccw(Points pts, int a, int b, int c) {
         return Geometry.orient2d(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
     }
 

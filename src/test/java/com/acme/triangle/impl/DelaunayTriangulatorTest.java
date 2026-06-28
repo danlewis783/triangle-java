@@ -33,8 +33,8 @@ class DelaunayTriangulatorTest {
         for (Scenario s : ScenarioFixtures.all()) {
             tests.add(dynamicTest(s.name, () -> {
                 TriangleMesherInput in = s.input;
-                List<Corners> tris =
-                        DelaunayTriangulator.triangulate(in.pointList, in.numberOfPoints);
+                List<Corners> tris = DelaunayTriangulator.triangulate(
+                        new Points(in.pointList, in.numberOfPoints));
                 TriangleMesherOutput o = toFlatMesh(in.pointList, in.numberOfPoints, tris);
                 assertThat(o.numberOfTriangles)
                         .as("%s produced triangles", s.name).isGreaterThan(0);

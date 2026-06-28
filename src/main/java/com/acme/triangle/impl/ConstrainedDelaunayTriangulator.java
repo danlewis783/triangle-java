@@ -42,9 +42,8 @@ public final class ConstrainedDelaunayTriangulator {
         Pslg pslg = splitIntersections(in);
         Points pts = pslg.points;
 
-        /* 2. Initial Delaunay of all points. (DelaunayTriangulator still takes the
-           flat point array; that input signature is the one remaining seam.) */
-        List<Corners> tris = DelaunayTriangulator.triangulate(pts.toArray(), pts.size());
+        /* 2. Initial Delaunay of all points. */
+        List<Corners> tris = DelaunayTriangulator.triangulate(pts);
 
         /* 3. Recover segments. */
         Set<Long> segSet = new HashSet<>();
