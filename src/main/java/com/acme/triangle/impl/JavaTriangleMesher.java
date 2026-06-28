@@ -117,7 +117,6 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                triangle index is only valid until the next split/insert. */
             List<Triangle> tris = mesh.trianglesView();
             Points points = mesh.pointsView();
-            List<Segment> segments = mesh.segmentsView();
 
             /* Ruppert: clear every encroached subsegment before any bad triangle.
                The mesh maintains the encroached candidates incrementally, so this
@@ -132,7 +131,13 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                     return mesh.toOutput();        /* quality achieved: build output once */
                 }
                 Point centre = offCentre(tris, points, t, bound);
-                int encroached = subsegmentEncroachedBy(centre, points, segments);
+                /* Insert the off-centre seeded from t (the bad triangle whose
+                   off-centre it is, holding it in its circumcircle - no O(T) point
+                   location). The mesh folds the Ruppert encroachment guard into the
+                   cavity gather, so if the off-centre would encroach a subsegment it
+                   is not inserted and that subsegment is returned to split instead -
+                   O(cavity), not an O(S) scan of every subsegment. */
+                int encroached = mesh.insertInteriorOrEncroachedSegment(centre, t);
                 if (encroached >= 0) {
                     mesh.splitSegment(encroached);
                     enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
@@ -140,11 +145,6 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                        requeue it (no-op if the split happened to destroy it). */
                     enqueueIfBad(bad, mesh, t, cosSqBound, maxAreaByAttr);
                 } else {
-                    /* Seed the Bowyer-Watson cavity from t, the bad triangle whose
-                       off-centre this is: t holds the point in its circumcircle, so
-                       no O(T) point location is needed (the old per-insert locate
-                       scan made refinement O(T^2)). */
-                    mesh.insertInteriorPoint(centre, t);
                     enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
                 }
             }
@@ -234,16 +234,6 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                 && (tc.a == c || tc.b == c || tc.c == c);
     }
 
-    private static int subsegmentEncroachedBy(Point p, Points points,
-                                              List<Segment> segments) {
-        for (int s = 0; s < segments.size(); s++) {
-            if (inDiametralDisk(points, segments.get(s).a, segments.get(s).b, p)) {
-                return s;
-            }
-        }
-        return -1;
-    }
-
     /**
      * True if the triangle's smallest angle is below the bound, tested via the
      * squared cosine of the angle opposite the shortest edge against
@@ -324,12 +314,6 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     private static double triangleArea(Point a, Point b, Point c) {
         return Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x))
                 / 2.0;
-    }
-
-    private static boolean inDiametralDisk(Points points, int a, int b, Point p) {
-        double pax = points.x(a), pay = points.y(a), pbx = points.x(b), pby = points.y(b);
-        double dot = (p.x - pax) * (p.x - pbx) + (p.y - pay) * (p.y - pby);
-        return dot < 0;                             /* angle a-p-b obtuse */
     }
 
     /**

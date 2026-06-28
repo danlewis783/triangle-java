@@ -133,10 +133,6 @@ final class IncrementalCdt {
         return tris;
     }
 
-    List<Segment> segmentsView() {
-        return segments;
-    }
-
     /** Whether triangles carry a region attribute (read via {@link Triangle#attr}). */
     boolean hasAttributes() {
         return haveAttr;
@@ -171,28 +167,39 @@ final class IncrementalCdt {
         if (start < 0) {
             throw new IllegalArgumentException("point is not inside the domain");
         }
-        return insertInteriorPoint(p, start);
+        int pIdx = points.add(p);
+        provenances.add(new Provenance(VertexType.FREE, -1, -1));
+        insertViaCavity(pIdx, new int[]{start}, -1L);
+        return pIdx;
     }
 
     /**
-     * Insert an interior point via constrained Bowyer-Watson, seeding the cavity
-     * from {@code seedTriangle} - a triangle already known to hold {@code p} in
-     * its circumcircle - so no O(T) point location is needed (the prior linear
-     * {@code locate} scan per insertion made refinement O(T^2)). During
-     * refinement the seed is the bad triangle being split, whose
-     * circumcentre/off-centre {@code p} is, so it holds {@code p} in its
-     * circumcircle by construction. The Bowyer-Watson cavity is the connected set
-     * of triangles whose circumcircle contains {@code p}; flooding from any one
-     * member gathers all of it, so seeding from {@code seedTriangle} reaches the
-     * same cavity the containing triangle would.
+     * Try to insert an interior off-centre {@code p}, seeding the cavity from
+     * {@code seedTriangle} - the bad triangle whose off-centre {@code p} is, so it
+     * holds {@code p} in its circumcircle (no point location needed). Folds
+     * Ruppert's "do not insert a point that encroaches a subsegment" guard into
+     * the cavity gather, which is what makes it local: when no subsegment is
+     * currently encroached (the precondition for refining a triangle), every
+     * subsegment {@code p} could encroach lies on {@code p}'s cavity boundary, so
+     * the gather tests exactly those - O(cavity), not an O(S) scan of all
+     * subsegments. (A subsegment whose {@code p}-side incident triangle did not
+     * hold {@code p} in its circumcircle would have that triangle's apex inside
+     * its diametral disk - i.e. it would already be encroached, hence split first.)
      *
-     * @return the new vertex index
+     * @return {@code -1} if {@code p} was inserted; otherwise the index of a
+     *         subsegment {@code p} encroaches, for the caller to split instead
      */
-    int insertInteriorPoint(Point p, int seedTriangle) {
+    int insertInteriorOrEncroachedSegment(Point p, int seedTriangle) {
+        List<Integer> cavity = new ArrayList<>();
+        List<BoundaryEdge> fan = new ArrayList<>();
+        int encroached = gatherCavity(p, new int[]{seedTriangle}, -1L, cavity, fan, true);
+        if (encroached >= 0) {
+            return encroached;                  /* p encroaches a subsegment; do not insert */
+        }
         int pIdx = points.add(p);
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
-        insertViaCavity(pIdx, new int[]{seedTriangle}, -1L);
-        return pIdx;
+        commitCavity(pIdx, cavity, fan);
+        return -1;
     }
 
     /**
@@ -289,29 +296,35 @@ final class IncrementalCdt {
 
     /**
      * Constrained Bowyer-Watson insertion of an already-added vertex {@code pIdx},
-     * maintaining adjacency. Starting from {@code seeds} (triangles already known
-     * to contain it in their circumcircle), walk the maintained neighbour links to
-     * gather the cavity of triangles whose circumcircle contains it - never
-     * crossing a current segment - then re-fan the cavity boundary around it,
-     * relinking locally. The boundary edge equal to {@code skipEdgeKey} is not
-     * re-fanned (used when splitting a boundary segment, where the split edge would
-     * form a degenerate triangle); pass {@code -1L} for none. Each new triangle
-     * inherits its source cavity triangle's region attribute, so a cavity that
-     * spans two regions attributes correctly.
-     * <p>
-     * The fan is built as {@code {u, w, p}} with the inserted vertex {@code p}
-     * always at corner 2: the boundary edge {@code (u,w)} is then opposite corner
-     * 2 (slot 2 -&gt; the outer-ring neighbour), and the two interior fan edges are
-     * {@code (p,u)} at slot 1 and {@code (w,p)} at slot 0. Adjacent fan triangles
-     * are paired by shared boundary vertex - each appears once as a {@code u}
-     * (slot-1 edge) and once as a {@code w} (slot-0 edge) - and the outer-ring
-     * neighbour's link back into the cavity is repointed to the new triangle.
+     * maintaining adjacency: gather its cavity ({@link #gatherCavity}) and re-fan
+     * it ({@link #commitCavity}). The boundary edge equal to {@code skipEdgeKey} is
+     * not re-fanned (used when splitting a boundary segment, where the split edge
+     * would form a degenerate triangle); pass {@code -1L} for none.
      */
     private void insertViaCavity(int pIdx, int[] seeds, long skipEdgeKey) {
-        Point p = points.at(pIdx);
-        gen++;
-        lastFan.clear();
         List<Integer> cavity = new ArrayList<>();
+        List<BoundaryEdge> fan = new ArrayList<>();
+        gatherCavity(points.at(pIdx), seeds, skipEdgeKey, cavity, fan, false);
+        commitCavity(pIdx, cavity, fan);
+    }
+
+    /**
+     * Gather the constrained Bowyer-Watson cavity for point {@code p} (raw coords,
+     * not yet a vertex), seeded from {@code seeds}: walk the maintained neighbour
+     * links collecting every triangle whose circumcircle contains {@code p} - never
+     * crossing a current segment. The cavity slots are appended to {@code cavity}
+     * and its boundary edges (outer neighbour + region attribute) to {@code fan},
+     * skipping {@code skipEdgeKey}. Read-only: no slot is freed, so an encroachment
+     * result can abort the insertion with nothing to roll back.
+     *
+     * @return when {@code checkEncroach}, the index of a boundary subsegment whose
+     *         diametral disk contains {@code p} (so {@code p} encroaches it), or
+     *         {@code -1} for none; always {@code -1} when not checking
+     */
+    private int gatherCavity(Point p, int[] seeds, long skipEdgeKey,
+                             List<Integer> cavity, List<BoundaryEdge> fan,
+                             boolean checkEncroach) {
+        gen++;
         Deque<Integer> stack = new ArrayDeque<>();
         for (int s : seeds) {
             if (cavityGen[s] != gen) {
@@ -339,30 +352,54 @@ final class IncrementalCdt {
             }
         }
 
-        /* Collect the cavity-boundary edges (outer neighbour + region attribute)
-           before freeing the cavity, since freeing nulls the slots. A cavity edge
-           is on the boundary when its neighbour is outside the cavity or it is a
-           segment; the split edge (skipEdgeKey) is never re-fanned. */
-        List<BoundaryEdge> fan = new ArrayList<>();
+        /* Collect the cavity-boundary edges (outer neighbour + region attribute). A
+           cavity edge is on the boundary when its neighbour is outside the cavity
+           or it is a segment; the split edge (skipEdgeKey) is never re-fanned. A
+           candidate point can only encroach a boundary subsegment, so test those
+           here as they are found. */
+        int encroached = -1;
         for (int t : cavity) {
             Triangle tc = tris.get(t);
             for (int j = 0; j < 3; j++) {
                 int nb = tc.neighbor(j);
                 int u = tc.corner((j + 1) % 3), w = tc.corner((j + 2) % 3);
                 long k = key(u, w);
-                boolean boundary = nb < 0 || cavityGen[nb] != gen || segSet.contains(k);
+                boolean segment = segSet.contains(k);
+                boolean boundary = nb < 0 || cavityGen[nb] != gen || segment;
                 if (boundary && k != skipEdgeKey) {
                     fan.add(new BoundaryEdge(u, w, nb, tc.attr));
+                    if (checkEncroach && encroached < 0 && segment && inDiametralDisk(u, w, p)) {
+                        Integer si = segIndexByEdge.get(k);
+                        if (si != null) {
+                            encroached = si;
+                        }
+                    }
                 }
             }
         }
+        return encroached;
+    }
+
+    /**
+     * Re-fan the gathered {@code cavity} around the freshly added vertex {@code
+     * pIdx}: free the cavity slots and relink adjacency locally, recording the new
+     * triangles in {@link #lastFan}. Each new triangle inherits its source cavity
+     * triangle's region attribute, so a cavity that spans two regions attributes
+     * correctly.
+     * <p>
+     * The fan is built as {@code {u, w, p}} with {@code p} always at corner 2: the
+     * boundary edge {@code (u,w)} is then opposite corner 2 (slot 2 -&gt; the
+     * outer-ring neighbour), and the two interior fan edges are {@code (p,u)} at
+     * slot 1 and {@code (w,p)} at slot 0. Adjacent fan triangles are paired by
+     * shared boundary vertex - each appears once as a {@code u} (slot-1 edge) and
+     * once as a {@code w} (slot-0 edge) - and the outer-ring neighbour's link back
+     * into the cavity is repointed to the new triangle.
+     */
+    private void commitCavity(int pIdx, List<Integer> cavity, List<BoundaryEdge> fan) {
+        lastFan.clear();
         for (int t : cavity) {
             freeSlot(t);
         }
-
-        /* Re-fan and relink. asU/asW map each boundary vertex to the new triangle
-           where it sits at corner 0 (a 'u') or corner 1 (a 'w'); the two share the
-           interior fan edge through p and are linked when the second is created. */
         Map<Integer, Integer> asU = new HashMap<>();
         Map<Integer, Integer> asW = new HashMap<>();
         for (BoundaryEdge f : fan) {
@@ -525,6 +562,14 @@ final class IncrementalCdt {
         double pbx = points.x(b), pby = points.y(b);
         double px = points.x(p), py = points.y(p);
         return (px - pax) * (px - pbx) + (py - pay) * (py - pby) < 0;
+    }
+
+    /** Whether the loose point {@code p} (a candidate vertex) lies in the diametral
+        disk of subsegment {@code (a,b)} - so inserting it would encroach. */
+    private boolean inDiametralDisk(int a, int b, Point p) {
+        double pax = points.x(a), pay = points.y(a);
+        double pbx = points.x(b), pby = points.y(b);
+        return (p.x - pax) * (p.x - pbx) + (p.y - pay) * (p.y - pby) < 0;
     }
 
     TriangleMesherOutput2 toOutput() {
