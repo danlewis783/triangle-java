@@ -119,8 +119,10 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
             Points points = mesh.pointsView();
             List<Segment> segments = mesh.segmentsView();
 
-            /* Ruppert: clear every encroached subsegment before any bad triangle. */
-            int seg = encroachedSubsegment(mesh, points, segments);
+            /* Ruppert: clear every encroached subsegment before any bad triangle.
+               The mesh maintains the encroached candidates incrementally, so this
+               is O(1) amortized rather than an O(S) rescan each iteration. */
+            int seg = mesh.pollEncroachedSubsegment();
             if (seg >= 0) {
                 mesh.splitSegment(seg);
                 enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
@@ -230,24 +232,6 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         return (tc.a == a || tc.b == a || tc.c == a)
                 && (tc.a == b || tc.b == b || tc.c == b)
                 && (tc.a == c || tc.b == c || tc.c == c);
-    }
-
-    /** First subsegment with an adjacent triangle apex inside its diametral disk.
-        Reads each segment's opposite apexes from the mesh's maintained index - an
-        O(1) adjacency hop apiece - so the scan is O(S) with no per-iteration
-        edge->apex rebuild. */
-    private static int encroachedSubsegment(IncrementalCdt mesh,
-                                            Points points,
-                                            List<Segment> segments) {
-        for (int s = 0; s < segments.size(); s++) {
-            int a = segments.get(s).a, b = segments.get(s).b;
-            for (int ap : mesh.apexesOfSegment(a, b)) {
-                if (ap >= 0 && inDiametralDisk(points, a, b, points.at(ap))) {
-                    return s;
-                }
-            }
-        }
-        return -1;
     }
 
     private static int subsegmentEncroachedBy(Point p, Points points,

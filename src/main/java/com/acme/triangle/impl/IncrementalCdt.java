@@ -52,6 +52,18 @@ final class IncrementalCdt {
        decide encroachment are an O(1) adjacency hop, not an O(T) edge->apex
        rebuild. Maintained as the fan replaces incident triangles. */
     private final Map<Long, Integer> segTri = new HashMap<>();
+    /* Each segment edge -> its index in `segments`, so an encroached subsegment
+       found by edge can be split by index (splitting keeps the first half at its
+       index). Maintained alongside segSet. */
+    private final Map<Long, Integer> segIndexByEdge = new HashMap<>();
+    /* Work queue of subsegments that may be encroached (segment indices) - a
+       superset of the truly-encroached set, so emptying it proves none is
+       encroached. Seeded with every subsegment, then refilled with the new fan's
+       subsegments after each split; an interior insertion never newly encroaches
+       (its point is rejected if it would), so none is needed there. Candidates are
+       validated on poll, so stale or now-clean entries are simply discarded - the
+       O(S)-per-iteration full rescan becomes O(1) amortized. */
+    private final Deque<Integer> encroachQueue = new ArrayDeque<>();
 
     /* Dead slots awaiting reuse, and the count of live triangles. */
     private final Deque<Integer> freeSlots = new ArrayDeque<>();
@@ -85,8 +97,11 @@ final class IncrementalCdt {
         liveCount = bt.size();
         cavityGen = new int[Math.max(16, tris.size())];
         for (Constraint c : base.segments) {
+            int idx = segments.size();
             segments.add(new Segment(c.a, c.b, c.marker, c.a, c.b));  /* original endpoints = a, b */
             segSet.add(key(c.a, c.b));
+            segIndexByEdge.put(key(c.a, c.b), idx);
+            encroachQueue.add(idx);                  /* seed: every subsegment is a candidate */
         }
         for (int i = 0; i < tris.size(); i++) {            /* seed segment->triangle */
             Triangle t = tris.get(i);
@@ -208,17 +223,24 @@ final class IncrementalCdt {
 
         segSet.remove(key(a, b));            /* let the cavity span the old segment */
         segTri.remove(key(a, b));
+        segIndexByEdge.remove(key(a, b));
         insertViaCavity(mIdx, seeds, key(a, b));
 
+        int secondIndex = segments.size();
         segments.set(segIndex, new Segment(a, mIdx, marker, origOrg, origDest));
         segments.add(new Segment(mIdx, b, marker, origOrg, origDest));
         segSet.add(key(a, mIdx));
         segSet.add(key(mIdx, b));
+        segIndexByEdge.put(key(a, mIdx), segIndex);    /* first half keeps this index */
+        segIndexByEdge.put(key(mIdx, b), secondIndex);
         /* The halves are new segments incident to mIdx; back each with one of the
            fan triangles just created (the re-fan only indexes pre-existing outer
            edges, so these are registered here). */
         indexSegmentTriangle(a, mIdx);
         indexSegmentTriangle(mIdx, b);
+        /* The midpoint can newly encroach subsegments on the fan; re-queue them
+           (and the two halves) as encroachment candidates. */
+        enqueueEncroachFan();
         return mIdx;
     }
 
@@ -417,28 +439,18 @@ final class IncrementalCdt {
         }
     }
 
-    /** The (one or two) live triangles having both a and b as corners. */
+    /** The (one or two) live triangles incident to segment edge {@code (a,b)}, via
+        the maintained {@link #segTri} index plus one adjacency hop - O(1), not an
+        O(T) mesh scan. Empty if {@code (a,b)} is not a current segment edge. */
     private int[] incidentTriangles(int a, int b) {
-        int t1 = -1, t2 = -1;
-        for (int i = 0; i < tris.size(); i++) {
-            Triangle t = tris.get(i);
-            if (t == null) {
-                continue;
-            }
-            boolean ha = t.a == a || t.b == a || t.c == a;
-            boolean hb = t.a == b || t.b == b || t.c == b;
-            if (ha && hb) {
-                if (t1 < 0) {
-                    t1 = i;
-                } else {
-                    t2 = i;
-                    break;
-                }
-            }
-        }
-        if (t1 < 0) {
+        Integer t1 = segTri.get(key(a, b));
+        if (t1 == null) {
             return new int[0];
         }
+        Triangle tc = tris.get(t1);
+        int apex = third(tc, a, b);
+        int slot = tc.a == apex ? 0 : tc.b == apex ? 1 : 2;   /* edge (a,b) opposite the apex */
+        int t2 = tc.neighbor(slot);
         return t2 < 0 ? new int[]{t1} : new int[]{t1, t2};
     }
 
@@ -468,6 +480,51 @@ final class IncrementalCdt {
             return tc.a;
         }
         return tc.b != a && tc.b != b ? tc.b : tc.c;
+    }
+
+    /**
+     * The index of a subsegment that is currently encroached - an incident
+     * triangle apex lies in its diametral disk - or {@code -1} if none is. Drains
+     * the candidate {@link #encroachQueue}, discarding entries that are not (a
+     * subsegment's encroachment changes only when its incident triangles do, and
+     * the queue is refilled at exactly those points), so this is O(1) amortized in
+     * place of a full O(S) rescan every refinement iteration.
+     */
+    int pollEncroachedSubsegment() {
+        while (!encroachQueue.isEmpty()) {
+            int s = encroachQueue.poll();
+            Segment seg = segments.get(s);
+            for (int apex : apexesOfSegment(seg.a, seg.b)) {
+                if (apex >= 0 && inDiametralDisk(seg.a, seg.b, apex)) {
+                    return s;
+                }
+            }
+        }
+        return -1;
+    }
+
+    /** Re-queue every subsegment among the most recent fan as an encroachment
+        candidate - the only subsegments whose incident apex the mutation changed. */
+    private void enqueueEncroachFan() {
+        for (int id : lastFan) {
+            Triangle t = tris.get(id);
+            for (int j = 0; j < 3; j++) {
+                Integer s = segIndexByEdge.get(key(t.corner(j), t.corner((j + 1) % 3)));
+                if (s != null) {
+                    encroachQueue.add(s);
+                }
+            }
+        }
+    }
+
+    /** Whether vertex {@code p} lies in the diametral disk of subsegment
+        {@code (a,b)} - i.e. the angle a-p-b is obtuse, so {@code (a,b)} is
+        encroached by {@code p}. */
+    private boolean inDiametralDisk(int a, int b, int p) {
+        double pax = points.x(a), pay = points.y(a);
+        double pbx = points.x(b), pby = points.y(b);
+        double px = points.x(p), py = points.y(p);
+        return (px - pax) * (px - pbx) + (py - pay) * (py - pby) < 0;
     }
 
     TriangleMesherOutput2 toOutput() {
