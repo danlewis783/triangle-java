@@ -84,11 +84,9 @@ final class IncrementalCdt {
         }
         liveCount = bt.size();
         cavityGen = new int[Math.max(16, tris.size())];
-        Constraints bs = base.segments;
-        for (int i = 0; i < bs.size(); i++) {
-            int a = bs.a(i), b = bs.b(i), marker = bs.marker(i);
-            segments.add(new Segment(a, b, marker, a, b));   /* original endpoints = a, b */
-            segSet.add(key(a, b));
+        for (Constraint c : base.segments) {
+            segments.add(new Segment(c.a, c.b, c.marker, c.a, c.b));  /* original endpoints = a, b */
+            segSet.add(key(c.a, c.b));
         }
         for (int i = 0; i < tris.size(); i++) {            /* seed segment->triangle */
             Triangle t = tris.get(i);
@@ -483,15 +481,10 @@ final class IncrementalCdt {
         }
         Triangles triangles = new Triangles(triData, outAttr, nt);
 
-        int s = segments.size();
-        int[] segData = new int[3 * s];
-        for (int i = 0; i < s; i++) {
-            Segment sg = segments.get(i);
-            segData[3 * i] = sg.a;
-            segData[3 * i + 1] = sg.b;
-            segData[3 * i + 2] = sg.marker;
+        List<Constraint> outSegments = new ArrayList<>(segments.size());
+        for (Segment sg : segments) {
+            outSegments.add(new Constraint(sg.a, sg.b, sg.marker));
         }
-        Constraints outSegments = new Constraints(segData, s);
 
         /* A fresh, tight copy of the live coordinates - the mesh keeps its own
            growable store rather than handing out its mutable internals. */

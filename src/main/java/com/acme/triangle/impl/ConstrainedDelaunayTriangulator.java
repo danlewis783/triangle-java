@@ -409,19 +409,9 @@ public final class ConstrainedDelaunayTriangulator {
         }
         Triangles triangles = new Triangles(triData, outAttr, t);
 
-        int s = pslg.segments.size();
-        int[] segData = new int[3 * s];
-        for (int i = 0; i < s; i++) {
-            Constraint c = pslg.segments.get(i);
-            segData[3 * i] = c.a;
-            segData[3 * i + 1] = c.b;
-            segData[3 * i + 2] = c.marker;
-        }
-        Constraints segments = new Constraints(segData, s);
-
-        /* The working point store is single-use (the PSLG is discarded after
-           this), so the output adopts it directly rather than rebuilding a copy. */
-        return new TriangleMesherOutput2(pslg.points, triangles, segments);
+        /* The PSLG is single-use (discarded after this), so the output adopts its
+           point store and recovered subsegment list directly rather than copying. */
+        return new TriangleMesherOutput2(pslg.points, triangles, pslg.segments);
     }
 
     /* --- geometry helpers ---------------------------------------------------- */
