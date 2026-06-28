@@ -44,7 +44,7 @@ public final class ConstrainedDelaunayTriangulator {
         int np = pslg.numPoints;
 
         /* 2. Initial Delaunay of all points. */
-        List<Corners> tris = toList(DelaunayTriangulator.triangulate(pts, np).triangleList);
+        List<Corners> tris = DelaunayTriangulator.triangulate(pts, np);
 
         /* 3. Recover segments. */
         Set<Long> segSet = new HashSet<>();
@@ -429,14 +429,6 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     /* --- geometry helpers ---------------------------------------------------- */
-
-    private static List<Corners> toList(int[] triangleList) {
-        List<Corners> tris = new ArrayList<>();
-        for (int i = 0; i < triangleList.length; i += 3) {
-            tris.add(new Corners(triangleList[i], triangleList[i + 1], triangleList[i + 2]));
-        }
-        return tris;
-    }
 
     private static boolean isEdge(List<Corners> tris, int a, int b) {
         for (Corners t : tris) {

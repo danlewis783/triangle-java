@@ -1,6 +1,5 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.TriangleMesherOutput;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -18,10 +17,13 @@ import java.util.Set;
  * The robust {@link Geometry} predicates make the incircle and orientation
  * tests exact, so the result is a genuine Delaunay triangulation.
  * <p>
- * Triangles are kept counterclockwise, and the output neighbour list follows
- * the convention {@code neighbor[3*i+j]} is the triangle across the edge
- * opposite corner {@code j}. This is the simple, correct version (O(n^2));
- * spatial acceleration can come later, validated by the same oracle.
+ * Triangles are returned counterclockwise as {@link Corners} - the
+ * construction-phase corner triples the consumer
+ * ({@link ConstrainedDelaunayTriangulator}) goes on to recover constraints
+ * into. Adjacency and any flat output are derived by the caller, since this
+ * phase needs to hand back only the corners. This is the simple, correct
+ * version (O(n^2)); spatial acceleration can come later, validated by the same
+ * oracle.
  */
 public final class DelaunayTriangulator {
 
@@ -31,9 +33,10 @@ public final class DelaunayTriangulator {
     /**
      * @param points    interleaved coordinates {@code x0,y0,x1,y1,...}
      * @param numPoints number of points (indices 0..numPoints-1)
-     * @return a Delaunay mesh: pointList, triangleList, neighborList, no segments
+     * @return the Delaunay triangles as CCW {@link Corners} over the input
+     *         points (a fresh, mutable list the caller may refine in place)
      */
-    public static TriangleMesherOutput triangulate(double[] points, int numPoints) {
+    public static List<Corners> triangulate(double[] points, int numPoints) {
         if (numPoints < 3) {
             throw new IllegalArgumentException("need at least 3 points");
         }
@@ -57,7 +60,7 @@ public final class DelaunayTriangulator {
                 kept.add(t);
             }
         }
-        return buildOutput(points, numPoints, kept);
+        return kept;
     }
 
     private static void insert(double[] pts, List<Corners> triangles, int p) {
@@ -100,25 +103,6 @@ public final class DelaunayTriangulator {
             out.add(new Corners(b, a, p));
         }
         /* s == 0: p collinear with the boundary edge - degenerate, skip. */
-    }
-
-    private static TriangleMesherOutput buildOutput(double[] points, int n,
-                                                    List<Corners> tris) {
-        TriangleMesherOutput o = new TriangleMesherOutput();
-        o.numberOfPoints = n;
-        o.pointList = Arrays.copyOf(points, n * 2);
-        o.numberOfTriangles = tris.size();
-        o.numberOfSegments = 0;
-        o.triangleList = new int[tris.size() * 3];
-        for (int i = 0; i < tris.size(); i++) {
-            Corners t = tris.get(i);
-            o.triangleList[3 * i] = t.a;
-            o.triangleList[3 * i + 1] = t.b;
-            o.triangleList[3 * i + 2] = t.c;
-        }
-        int[] tri = o.triangleList;
-        o.neighborList = Topology.neighbors(tris.size(), (i, c) -> tri[3 * i + c]);
-        return o;
     }
 
     private static void addSuperTriangle(double[] pts, int n, int sa, int sb, int sc) {
