@@ -7,9 +7,9 @@ import com.acme.triangle.predicate.Predicates;
  * in-circle test in the mesher routes through here, so {@code Predicates} stays
  * an implementation detail reached nowhere else in this package. Methods come in
  * families by the coordinate store the caller holds - a flat interleaved
- * {@code double[]} and a pre-flatten {@code List<double[]>} for the construction
- * stages, and a {@link Points} for the refinement kernel - each feeding the same
- * exact predicate.
+ * {@code double[]} for the initial Delaunay of the raw point set, and a {@link
+ * Points} store for the constrained-Delaunay construction and the refinement
+ * kernel - each feeding the same exact predicate.
  */
 final class Geometry {
 
@@ -61,5 +61,14 @@ final class Geometry {
                 points.x(b), points.y(b),
                 points.x(c), points.y(c),
                 p.x, p.y) > 0;
+    }
+
+    /** Whether vertex {@code d} lies inside the circumcircle of CCW triangle {@code t}. */
+    static boolean inCircle(Points points, Corners t, int d) {
+        return Predicates.incircle(
+                points.x(t.a), points.y(t.a),
+                points.x(t.b), points.y(t.b),
+                points.x(t.c), points.y(t.c),
+                points.x(d), points.y(d)) > 0;
     }
 }

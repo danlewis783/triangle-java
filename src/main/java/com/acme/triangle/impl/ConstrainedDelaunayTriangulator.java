@@ -40,11 +40,11 @@ public final class ConstrainedDelaunayTriangulator {
     static TriangleMesherOutput2 triangulate(TriangleMesherInput2 in) {
         /* 1. Split crossing segments. */
         Pslg pslg = splitIntersections(in);
-        double[] pts = pslg.points;
-        int np = pslg.numPoints;
+        Points pts = pslg.points;
 
-        /* 2. Initial Delaunay of all points. */
-        List<Corners> tris = DelaunayTriangulator.triangulate(pts, np);
+        /* 2. Initial Delaunay of all points. (DelaunayTriangulator still takes the
+           flat point array; that input signature is the one remaining seam.) */
+        List<Corners> tris = DelaunayTriangulator.triangulate(pts.toArray(), pts.size());
 
         /* 3. Recover segments. */
         Set<Long> segSet = new HashSet<>();
@@ -62,7 +62,7 @@ public final class ConstrainedDelaunayTriangulator {
         /* 6. Attribute regions. */
         double[] attr = attributeRegions(pts, tris, removed, segSet, in.regions);
 
-        return buildOutput(pts, np, tris, removed, attr, pslg);
+        return buildOutput(tris, removed, attr, pslg);
     }
 
     /* --- 1. segment intersection splitting ----------------------------------- */
@@ -78,16 +78,12 @@ public final class ConstrainedDelaunayTriangulator {
      * produced by {@link #splitIntersections}.
      */
     private static final class Pslg {
-        final double[] points;
-        final int numPoints;
+        final Points points;
         final List<Constraint> segments;
-        final boolean hasRegions;
 
-        Pslg(double[] points, int numPoints, List<Constraint> segments, boolean hasRegions) {
+        Pslg(Points points, List<Constraint> segments) {
             this.points = points;
-            this.numPoints = numPoints;
             this.segments = segments;
-            this.hasRegions = hasRegions;
         }
     }
 
@@ -141,7 +137,7 @@ public final class ConstrainedDelaunayTriangulator {
             }
         }
 
-        return new Pslg(pts.toArray(), pts.size(), segs, !in.regions.isEmpty());
+        return new Pslg(pts, segs);
     }
 
     private static boolean share(Constraint a, Constraint b) {
@@ -191,7 +187,7 @@ public final class ConstrainedDelaunayTriangulator {
         }
     }
 
-    private static void insertSegment(double[] pts, List<Corners> tris, int a, int b) {
+    private static void insertSegment(Points pts, List<Corners> tris, int a, int b) {
         while (!isEdge(tris, a, b)) {
             Flip flip = findFlippableCrossing(pts, tris, a, b);
             if (flip == null) {
@@ -201,7 +197,7 @@ public final class ConstrainedDelaunayTriangulator {
         }
     }
 
-    private static @Nullable Flip findFlippableCrossing(double[] pts, List<Corners> tris,
+    private static @Nullable Flip findFlippableCrossing(Points pts, List<Corners> tris,
                                                         int a, int b) {
         Map<Long, EdgeSide> edge = new HashMap<>();
         for (int i = 0; i < tris.size(); i++) {
@@ -225,7 +221,7 @@ public final class ConstrainedDelaunayTriangulator {
         return null;
     }
 
-    private static void doFlip(double[] pts, List<Corners> tris, Flip f) {
+    private static void doFlip(Points pts, List<Corners> tris, Flip f) {
         tris.remove(f.triHi);              /* remove larger index first */
         tris.remove(f.triLo);
         tris.add(ccw(pts, f.p, f.v, f.q));
@@ -234,7 +230,7 @@ public final class ConstrainedDelaunayTriangulator {
 
     /* --- 4. constrained Delaunay restoration --------------------------------- */
 
-    private static void restoreDelaunay(double[] pts, List<Corners> tris,
+    private static void restoreDelaunay(Points pts, List<Corners> tris,
                                         Set<Long> segSet) {
         boolean changed = true;
         while (changed) {
@@ -274,7 +270,7 @@ public final class ConstrainedDelaunayTriangulator {
         return Topology.neighbors(tris.size(), (i, c) -> tris.get(i).corner(c));
     }
 
-    private static boolean[] carve(double[] pts, List<Corners> tris, Set<Long> segSet,
+    private static boolean[] carve(Points pts, List<Corners> tris, Set<Long> segSet,
                                    List<Point> holes) {
         int n = tris.size();
         int[] neigh = adjacency(tris);
@@ -305,7 +301,7 @@ public final class ConstrainedDelaunayTriangulator {
         return removed;
     }
 
-    private static double @Nullable [] attributeRegions(double[] pts, List<Corners> tris,
+    private static double @Nullable [] attributeRegions(Points pts, List<Corners> tris,
                                              boolean[] removed, Set<Long> segSet,
                                              List<Region> regions) {
         if (regions.isEmpty()) {
@@ -359,7 +355,7 @@ public final class ConstrainedDelaunayTriangulator {
     /* The first triangle whose closed region contains (x,y). On-edge counts, so
        a seed lying exactly on a triangle edge still locates a triangle (it would
        be missed by a strictly-inside test). */
-    private static int locate(double[] pts, List<Corners> tris, double x, double y) {
+    private static int locate(Points pts, List<Corners> tris, double x, double y) {
         for (int i = 0; i < tris.size(); i++) {
             Corners t = tris.get(i);
             int s1 = Geometry.orient2d(pts, t.a, t.b, x, y);
@@ -376,8 +372,7 @@ public final class ConstrainedDelaunayTriangulator {
 
     /* --- output -------------------------------------------------------------- */
 
-    private static TriangleMesherOutput2 buildOutput(double[] pts, int np,
-                                                     List<Corners> tris, boolean[] removed,
+    private static TriangleMesherOutput2 buildOutput(List<Corners> tris, boolean[] removed,
                                                      double @Nullable [] attr, Pslg pslg) {
         List<Integer> keep = new ArrayList<>();
         for (int i = 0; i < tris.size(); i++) {
@@ -425,7 +420,9 @@ public final class ConstrainedDelaunayTriangulator {
         }
         Constraints segments = new Constraints(segData, s);
 
-        return new TriangleMesherOutput2(new Points(pts, np), triangles, segments);
+        /* The working point store is single-use (the PSLG is discarded after
+           this), so the output adopts it directly rather than rebuilding a copy. */
+        return new TriangleMesherOutput2(pslg.points, triangles, segments);
     }
 
     /* --- geometry helpers ---------------------------------------------------- */
@@ -441,29 +438,22 @@ public final class ConstrainedDelaunayTriangulator {
         return false;
     }
 
-    private static boolean cross(double[] pts, int u, int v, int a, int b) {
-        int d1 = Geometry.orient2d(pts, a, b, u), d2 = Geometry.orient2d(pts, a, b, v);
-        int d3 = Geometry.orient2d(pts, u, v, a), d4 = Geometry.orient2d(pts, u, v, b);
-        return d1 * d2 < 0 && d3 * d4 < 0;
-    }
-
     private static boolean cross(Points pts, int u, int v, int a, int b) {
         int d1 = orient(pts, a, b, u), d2 = orient(pts, a, b, v);
         int d3 = orient(pts, u, v, a), d4 = orient(pts, u, v, b);
         return d1 * d2 < 0 && d3 * d4 < 0;
     }
 
-    private static boolean convex(double[] pts, int u, int v, int p, int q) {
-        return Geometry.orient2d(pts, p, q, u) * Geometry.orient2d(pts, p, q, v) < 0;
+    private static boolean convex(Points pts, int u, int v, int p, int q) {
+        return orient(pts, p, q, u) * orient(pts, p, q, v) < 0;
     }
 
-    private static Corners ccw(double[] pts, int a, int b, int c) {
-        return Geometry.orient2d(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
+    private static Corners ccw(Points pts, int a, int b, int c) {
+        return orient(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
     }
 
-    /** Orientation of (a, b, c) over the growable working {@link Points} -
-        intersection splitting appends points before the set is flattened into the
-        {@code double[]} the rest of the pipeline addresses. */
+    /** Orientation of (a, b, c) - the single orientation entry the
+        construction-phase helpers share, over the working {@link Points} store. */
     private static int orient(Points pts, int a, int b, int c) {
         return Geometry.orient2d(pts, a, b, c);
     }
