@@ -5,10 +5,9 @@ import com.acme.triangle.TriangleMesherOutput;
 import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -25,8 +24,12 @@ import java.util.Set;
  *   <li>attribute: flood from each region seed across non-segment edges.</li>
  * </ol>
  *
- * All geometric tests use the robust {@link Geometry}. Refinement (quality) is
- * phase 3; this produces the unrefined constrained Delaunay mesh.
+ * Steps 3-6 run on a {@link CdtMesh} - a triangle arena with maintained
+ * neighbour links - so segment recovery walks the segment's channel locally and
+ * every flip is O(1), rather than rebuilding a global edge map and shifting a
+ * list per flip (the previous O(T^2) recovery/restoration). All geometric tests
+ * use the robust {@link Geometry}. Refinement (quality) is phase 3; this produces
+ * the unrefined constrained Delaunay mesh.
  */
 public final class ConstrainedDelaunayTriangulator {
 
@@ -45,23 +48,17 @@ public final class ConstrainedDelaunayTriangulator {
         /* 2. Initial Delaunay of all points. */
         List<Corners> tris = DelaunayTriangulator.triangulate(pts);
 
-        /* 3. Recover segments. */
-        Set<Long> segSet = new HashSet<>();
+        /* 3-6. Recover segments, restore Delaunay, carve, attribute - all on the
+           maintained-adjacency arena. */
+        CdtMesh mesh = new CdtMesh(pts, tris);
         for (Constraint s : pslg.segments) {
-            insertSegment(pts, tris, s.a, s.b);
-            segSet.add(key(s.a, s.b));
+            mesh.recoverSegment(s.a, s.b);
         }
+        mesh.restoreDelaunay();
+        boolean[] removed = mesh.carve(in.holes);
+        double[] attr = mesh.attributeRegions(removed, in.regions);
 
-        /* 4. Restore constrained Delaunay. */
-        restoreDelaunay(pts, tris, segSet);
-
-        /* 5. Carve holes and concavities. */
-        boolean[] removed = carve(pts, tris, segSet, in.holes);
-
-        /* 6. Attribute regions. */
-        double[] attr = attributeRegions(pts, tris, removed, segSet, in.regions);
-
-        return buildOutput(tris, removed, attr, pslg);
+        return mesh.buildOutput(removed, attr, pslg);
     }
 
     /* --- 1. segment intersection splitting ----------------------------------- */
@@ -165,267 +162,460 @@ public final class ConstrainedDelaunayTriangulator {
         return new Point(x1 + t * (x2 - x1), y1 + t * (y2 - y1));
     }
 
-    /* --- 3. segment recovery via flips --------------------------------------- */
+    /* --- 3-6. constrained mesh on a maintained-adjacency arena --------------- */
 
     /**
-     * A convex edge flip: drop the two triangles in slots {@code triHi}/{@code
-     * triLo} that share edge {@code (u, v)} and replace them with the two
-     * triangles spanning the opposite diagonal {@code (p, q)}. The slots are
-     * ordered larger-first so removing one does not shift the other's index.
+     * The construction triangulation with maintained adjacency: parallel arrays
+     * of corners and neighbour links (slot {@code i} is triangle {@code i}, edge
+     * opposite corner {@code j} faces {@code nbr[3i+j]} or -1), plus one incident
+     * triangle per vertex for walking. The triangle count is fixed - flips replace
+     * two triangles in place and carving only marks them removed - so no slot is
+     * ever added or freed. Built once from the initial Delaunay; from then on every
+     * mutation is local.
      */
-    private static final class Flip {
-        final int triHi, triLo, u, v, p, q;
+    private static final class CdtMesh {
 
-        Flip(int triHi, int triLo, int u, int v, int p, int q) {
-            this.triHi = triHi;
-            this.triLo = triLo;
-            this.u = u;
-            this.v = v;
-            this.p = p;
-            this.q = q;
-        }
-    }
+        private final Points pts;
+        private final int nt;
+        private final int[] cor;          /* 3 corner vertex indices per triangle */
+        private final int[] nbr;          /* 3 neighbour triangle ids per triangle, -1 on a boundary */
+        private final int[] vtri;         /* one incident triangle per vertex, for the rotation walks */
+        private final Set<Long> segSet = new HashSet<>();
 
-    private static void insertSegment(Points pts, List<Corners> tris, int a, int b) {
-        while (!isEdge(tris, a, b)) {
-            Flip flip = findFlippableCrossing(pts, tris, a, b);
-            if (flip == null) {
-                return;                 /* defensive: nothing flippable */
-            }
-            doFlip(pts, tris, flip);
-        }
-    }
-
-    private static @Nullable Flip findFlippableCrossing(Points pts, List<Corners> tris,
-                                                        int a, int b) {
-        Map<Long, EdgeSide> edge = new HashMap<>();
-        for (int i = 0; i < tris.size(); i++) {
-            Corners t = tris.get(i);
-            for (int j = 0; j < 3; j++) {
-                int u = t.corner((j + 1) % 3), v = t.corner((j + 2) % 3);
-                long k = key(u, v);
-                EdgeSide prev = edge.get(k);
-                if (prev == null) {
-                    edge.put(k, new EdgeSide(i, j));
-                } else {
-                    int t1 = prev.tri, t2 = i;
-                    int p = tris.get(t1).corner(prev.corner);
-                    int q = t.corner(j);
-                    if (cross(pts, u, v, a, b) && convex(pts, u, v, p, q)) {
-                        return new Flip(Math.max(t1, t2), Math.min(t1, t2), u, v, p, q);
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    private static void doFlip(Points pts, List<Corners> tris, Flip f) {
-        tris.remove(f.triHi);              /* remove larger index first */
-        tris.remove(f.triLo);
-        tris.add(ccw(pts, f.p, f.v, f.q));
-        tris.add(ccw(pts, f.q, f.u, f.p));
-    }
-
-    /* --- 4. constrained Delaunay restoration --------------------------------- */
-
-    private static void restoreDelaunay(Points pts, List<Corners> tris,
-                                        Set<Long> segSet) {
-        boolean changed = true;
-        while (changed) {
-            changed = false;
-            Map<Long, EdgeSide> edge = new HashMap<>();
-            for (int i = 0; i < tris.size() && !changed; i++) {
+        CdtMesh(Points pts, List<Corners> tris) {
+            this.pts = pts;
+            this.nt = tris.size();
+            cor = new int[3 * nt];
+            for (int i = 0; i < nt; i++) {
                 Corners t = tris.get(i);
-                for (int j = 0; j < 3 && !changed; j++) {
-                    int u = t.corner((j + 1) % 3), v = t.corner((j + 2) % 3);
-                    long k = key(u, v);
-                    EdgeSide prev = edge.get(k);
-                    if (prev == null) {
-                        edge.put(k, new EdgeSide(i, j));
-                        continue;
-                    }
-                    if (segSet.contains(k)) {
-                        continue;
-                    }
-                    int t1 = prev.tri;
-                    int p = tris.get(t1).corner(prev.corner);
-                    int q = t.corner(j);
-                    if (Geometry.inCircle(pts, tris.get(t1), q) && convex(pts, u, v, p, q)) {
-                        doFlip(pts, tris, new Flip(Math.max(t1, i), Math.min(t1, i),
-                                u, v, p, q));
-                        changed = true;
-                    }
-                }
+                cor[3 * i] = t.a;
+                cor[3 * i + 1] = t.b;
+                cor[3 * i + 2] = t.c;
+            }
+            nbr = Topology.neighbors(nt, (i, c) -> cor[3 * i + c]);
+            vtri = new int[pts.size()];
+            for (int i = 0; i < nt; i++) {
+                vtri[cor[3 * i]] = i;
+                vtri[cor[3 * i + 1]] = i;
+                vtri[cor[3 * i + 2]] = i;
             }
         }
-    }
 
-    /* --- 5/6. carving and region attribution --------------------------------- */
+        /* --- arena helpers --------------------------------------------------- */
 
-    /** Triangle adjacency: neigh[3*i+j] = triangle across the edge opposite
-        corner j, or -1. Delegates to the shared {@link Topology#neighbors}. */
-    private static int[] adjacency(List<Corners> tris) {
-        return Topology.neighbors(tris.size(), (i, c) -> tris.get(i).corner(c));
-    }
+        private int localIndex(int t, int v) {
+            return cor[3 * t] == v ? 0 : cor[3 * t + 1] == v ? 1 : 2;
+        }
 
-    private static boolean[] carve(Points pts, List<Corners> tris, Set<Long> segSet,
-                                   List<Point> holes) {
-        int n = tris.size();
-        int[] neigh = adjacency(tris);
-        boolean[] removed = new boolean[n];
-        ArrayDeque<Integer> queue = new ArrayDeque<>();
+        /** The corner of triangle {@code t} that is neither {@code x} nor {@code y}. */
+        private int apex(int t, int x, int y) {
+            int c0 = cor[3 * t], c1 = cor[3 * t + 1], c2 = cor[3 * t + 2];
+            return (c0 != x && c0 != y) ? c0 : (c1 != x && c1 != y) ? c1 : c2;
+        }
 
-        /* Seed: triangles exposed to the outside across a non-segment hull edge. */
-        for (int i = 0; i < n; i++) {
-            Corners t = tris.get(i);
+        /** The neighbour of {@code t} across edge {@code (x,y)} (opposite the third
+            corner), or -1. */
+        private int acrossEdge(int t, int x, int y) {
             for (int j = 0; j < 3; j++) {
-                if (neigh[3 * i + j] == -1
-                        && !segSet.contains(key(t.corner((j + 1) % 3), t.corner((j + 2) % 3)))
-                        && !removed[i]) {
-                    removed[i] = true;
-                    queue.add(i);
+                int c = cor[3 * t + j];
+                if (c != x && c != y) {
+                    return nbr[3 * t + j];
+                }
+            }
+            return -1;
+        }
+
+        /** Set the neighbour of {@code t} across edge {@code (x,y)} to {@code value}. */
+        private void setNeighborAcross(int t, int x, int y, int value) {
+            for (int j = 0; j < 3; j++) {
+                int c = cor[3 * t + j];
+                if (c != x && c != y) {
+                    nbr[3 * t + j] = value;
+                    return;
                 }
             }
         }
-        /* Seed: triangle containing each hole point. */
-        for (Point h : holes) {
-            int t = locate(pts, tris, h.x, h.y);
-            if (t >= 0 && !removed[t]) {
-                removed[t] = true;
-                queue.add(t);
-            }
-        }
-        flood(tris, neigh, segSet, removed, queue);
-        return removed;
-    }
 
-    private static double @Nullable [] attributeRegions(Points pts, List<Corners> tris,
-                                             boolean[] removed, Set<Long> segSet,
-                                             List<Region> regions) {
-        if (regions.isEmpty()) {
-            return null;
-        }
-        int n = tris.size();
-        int[] neigh = adjacency(tris);
-        double[] attr = new double[n];
-        for (Region region : regions) {
-            int start = locate(pts, tris, region.site.x, region.site.y);
-            if (start < 0 || removed[start]) {
-                continue;
+        /** Store {@code (a,b,c)} into slot {@code s}, oriented counterclockwise. */
+        private void setCorCcw(int s, int a, int b, int c) {
+            if (orient(pts, a, b, c) >= 0) {
+                cor[3 * s] = a;
+                cor[3 * s + 1] = b;
+                cor[3 * s + 2] = c;
+            } else {
+                cor[3 * s] = a;
+                cor[3 * s + 1] = c;
+                cor[3 * s + 2] = b;
             }
+        }
+
+        /**
+         * Flip the edge {@code (u,v)} shared by {@code t1} (apex {@code p}) and
+         * {@code t2} (apex {@code q}) to the diagonal {@code (p,q)}, in place:
+         * {@code t1} becomes the triangle on {@code v}'s side, {@code t2} the one on
+         * {@code u}'s side, and the four outer neighbours are repointed.
+         */
+        private void flip(int t1, int t2, int u, int v, int p, int q) {
+            int nVp = acrossEdge(t1, v, p);
+            int nPu = acrossEdge(t1, p, u);
+            int nVq = acrossEdge(t2, v, q);
+            int nQu = acrossEdge(t2, q, u);
+            setCorCcw(t1, p, v, q);                 /* the half containing v */
+            setCorCcw(t2, q, u, p);                 /* the half containing u */
+            setNeighborAcross(t1, p, v, nVp);
+            setNeighborAcross(t1, v, q, nVq);
+            setNeighborAcross(t1, q, p, t2);        /* the new diagonal */
+            setNeighborAcross(t2, q, u, nQu);
+            setNeighborAcross(t2, u, p, nPu);
+            setNeighborAcross(t2, p, q, t1);
+            if (nVp >= 0) {
+                setNeighborAcross(nVp, v, p, t1);
+            }
+            if (nVq >= 0) {
+                setNeighborAcross(nVq, v, q, t1);
+            }
+            if (nQu >= 0) {
+                setNeighborAcross(nQu, q, u, t2);
+            }
+            if (nPu >= 0) {
+                setNeighborAcross(nPu, u, p, t2);
+            }
+            vtri[v] = t1;
+            vtri[u] = t2;
+            vtri[p] = t1;
+            vtri[q] = t1;
+        }
+
+        /* --- 3. segment recovery (Sloan's channel retriangulation) ----------- */
+
+        /**
+         * Make {@code (a,b)} an edge by retriangulating the channel of edges it
+         * crosses (Sloan 1993): collect the crossing edges, then repeatedly take
+         * one - if its quad is convex, flip it (re-queuing the new diagonal when it
+         * still crosses), otherwise re-queue it to retry once neighbouring flips
+         * have made it convex - until none remains. A convex crossing (a channel
+         * "ear") always exists, so this terminates. Then register the subsegment.
+         */
+        void recoverSegment(int a, int b) {
+            List<int[]> channel = new ArrayList<>();
+            if (!collectChannel(a, b, channel)) {
+                collectChannelGlobal(a, b, channel);   /* degenerate walk: seed globally */
+            }
+            ArrayDeque<int[]> queue = new ArrayDeque<>(channel);
+            int guard = 0, cap = 50 * (channel.size() + 1) + 64;
+            while (!queue.isEmpty() && guard++ < cap) {
+                int[] e = queue.poll();
+                int u = e[0], v = e[1];
+                int t1 = edgeTriangle(u, v);
+                if (t1 < 0) {
+                    continue;                       /* edge already flipped away */
+                }
+                int t2 = acrossEdge(t1, u, v);
+                if (t2 < 0 || !cross(pts, u, v, a, b)) {
+                    continue;                       /* boundary, or no longer crossing */
+                }
+                int p = apex(t1, u, v), q = apex(t2, u, v);
+                if (convex(pts, u, v, p, q)) {
+                    flip(t1, t2, u, v, p, q);
+                    if (cross(pts, p, q, a, b)) {
+                        queue.add(new int[]{p, q});  /* new diagonal still crosses; reprocess */
+                    }
+                } else {
+                    queue.add(e);                   /* reflex now; retry after others flip */
+                }
+            }
+            segSet.add(key(a, b));
+        }
+
+        /**
+         * Collect the edges crossing {@code (a,b)} into {@code out} by walking the
+         * channel from {@code a}, returning whether the walk completed (it stalls on
+         * a degenerate alignment - e.g. {@code (a,b)} collinear with another vertex
+         * - in which case the caller seeds globally). An empty channel with a true
+         * return means {@code (a,b)} is already an edge.
+         */
+        private boolean collectChannel(int a, int b, List<int[]> out) {
+            int t = enteringTriangle(a, b);
+            if (t < 0) {
+                return t == -1;                     /* -1: already an edge; -2: degenerate */
+            }
+            int ia = localIndex(t, a);
+            int u = cor[3 * t + (ia + 1) % 3], v = cor[3 * t + (ia + 2) % 3];
+            int w = 0, cap = 8 * nt + 64;
+            while (w++ < cap) {
+                out.add(new int[]{u, v});
+                int t2 = acrossEdge(t, u, v);
+                if (t2 < 0) {
+                    return false;
+                }
+                int q = apex(t2, u, v);
+                if (q == b) {
+                    return true;                    /* reached b's triangle: channel complete */
+                }
+                if (cross(pts, v, q, a, b)) {       /* segment continues across (v,q) */
+                    t = t2;
+                    u = v;
+                    v = q;
+                } else if (cross(pts, q, u, a, b)) { /* across (q,u) */
+                    t = t2;
+                    v = u;
+                    u = q;
+                } else {
+                    return false;                   /* degenerate: cannot step on */
+                }
+            }
+            return false;
+        }
+
+        /** Seed the channel by scanning all triangles for edges crossing {@code
+            (a,b)} - the robust fallback when the local walk stalls. */
+        private void collectChannelGlobal(int a, int b, List<int[]> out) {
+            out.clear();
+            for (int t = 0; t < nt; t++) {
+                for (int j = 0; j < 3; j++) {
+                    int nb = nbr[3 * t + j];
+                    if (nb < t) {                   /* each interior edge once; skips -1 */
+                        continue;
+                    }
+                    int u = cor[3 * t + (j + 1) % 3], v = cor[3 * t + (j + 2) % 3];
+                    if (cross(pts, u, v, a, b)) {
+                        out.add(new int[]{u, v});
+                    }
+                }
+            }
+        }
+
+        /**
+         * The triangle incident to {@code a} whose interior the ray {@code a->b}
+         * enters, or {@code -1} when {@code (a,b)} is already an edge. Rotates the
+         * fan around {@code a} (counterclockwise, then clockwise if {@code a} is on
+         * the hull). Returns {@code -2} if neither is found (degenerate; defensive).
+         */
+        private int enteringTriangle(int a, int b) {
+            int t0 = vtri[a];
+            int t = t0;
+            boolean ccw = true;
+            while (true) {
+                int ia = localIndex(t, a);
+                int p = cor[3 * t + (ia + 1) % 3], q = cor[3 * t + (ia + 2) % 3];
+                if (p == b || q == b) {
+                    return -1;                      /* (a,b) is an edge of t */
+                }
+                if (orient(pts, a, p, b) > 0 && orient(pts, a, q, b) < 0) {
+                    return t;                        /* a->b enters t through edge (p,q) */
+                }
+                int next = ccw ? nbr[3 * t + (ia + 1) % 3] : nbr[3 * t + (ia + 2) % 3];
+                if (next < 0) {
+                    if (ccw) {                       /* hit the hull; sweep the other way from t0 */
+                        ccw = false;
+                        t = nbr[3 * t0 + (localIndex(t0, a) + 2) % 3];
+                        if (t < 0) {
+                            return -2;
+                        }
+                        continue;
+                    }
+                    return -2;
+                }
+                t = next;
+                if (ccw && t == t0) {
+                    return -2;                       /* full fan, not found (defensive) */
+                }
+            }
+        }
+
+        /** A triangle having edge {@code (u,v)}, found by rotating the fan around
+            {@code u}, or -1 if {@code (u,v)} is not a current edge. */
+        private int edgeTriangle(int u, int v) {
+            int t0 = vtri[u];
+            int t = t0;
+            boolean ccw = true;
+            while (true) {
+                int iu = localIndex(t, u);
+                if (cor[3 * t + (iu + 1) % 3] == v || cor[3 * t + (iu + 2) % 3] == v) {
+                    return t;
+                }
+                int next = ccw ? nbr[3 * t + (iu + 1) % 3] : nbr[3 * t + (iu + 2) % 3];
+                if (next < 0) {
+                    if (ccw) {
+                        ccw = false;
+                        t = nbr[3 * t0 + (localIndex(t0, u) + 2) % 3];
+                        if (t < 0) {
+                            return -1;
+                        }
+                        continue;
+                    }
+                    return -1;
+                }
+                t = next;
+                if (ccw && t == t0) {
+                    return -1;
+                }
+            }
+        }
+
+        /* --- 4. constrained Delaunay restoration ----------------------------- */
+
+        /**
+         * Restore the Delaunay property on non-segment edges by Lawson flipping:
+         * seed a stack with every edge, and for each popped edge that a neighbour
+         * apex sees inside the triangle's circumcircle (and is flippable and not a
+         * segment) flip it and re-push the local edges. O(flips) amortized in place
+         * of the previous full rescan per flip.
+         */
+        void restoreDelaunay() {
+            ArrayDeque<Integer> stack = new ArrayDeque<>();
+            for (int t = 0; t < nt; t++) {
+                for (int j = 0; j < 3; j++) {
+                    stack.push(3 * t + j);
+                }
+            }
+            int guard = 0, cap = 200 * (nt + 1);
+            while (!stack.isEmpty() && guard++ < cap) {
+                int e = stack.pop();
+                int t = e / 3, j = e % 3;
+                int nb = nbr[3 * t + j];
+                if (nb < 0) {
+                    continue;
+                }
+                int u = cor[3 * t + (j + 1) % 3], v = cor[3 * t + (j + 2) % 3];
+                if (segSet.contains(key(u, v))) {
+                    continue;
+                }
+                int p = cor[3 * t + j], q = apex(nb, u, v);
+                if (Geometry.inCircle(pts, cor[3 * t], cor[3 * t + 1], cor[3 * t + 2], pts.at(q))
+                        && convex(pts, u, v, p, q)) {
+                    flip(t, nb, u, v, p, q);
+                    for (int k = 0; k < 3; k++) {
+                        stack.push(3 * t + k);
+                        stack.push(3 * nb + k);
+                    }
+                }
+            }
+        }
+
+        /* --- 5/6. carving and region attribution ----------------------------- */
+
+        private boolean isSegmentEdge(int t, int j) {
+            return segSet.contains(key(cor[3 * t + (j + 1) % 3], cor[3 * t + (j + 2) % 3]));
+        }
+
+        boolean[] carve(List<Point> holes) {
+            boolean[] removed = new boolean[nt];
             ArrayDeque<Integer> queue = new ArrayDeque<>();
-            boolean[] seen = new boolean[n];
-            seen[start] = true;
-            queue.add(start);
+
+            /* Seed: triangles exposed to the outside across a non-segment hull edge. */
+            for (int i = 0; i < nt; i++) {
+                for (int j = 0; j < 3; j++) {
+                    if (nbr[3 * i + j] == -1 && !isSegmentEdge(i, j) && !removed[i]) {
+                        removed[i] = true;
+                        queue.add(i);
+                    }
+                }
+            }
+            /* Seed: triangle containing each hole point. */
+            for (Point h : holes) {
+                int t = locate(h.x, h.y);
+                if (t >= 0 && !removed[t]) {
+                    removed[t] = true;
+                    queue.add(t);
+                }
+            }
             while (!queue.isEmpty()) {
                 int t = queue.poll();
-                attr[t] = region.attribute;
-                Corners tc = tris.get(t);
                 for (int j = 0; j < 3; j++) {
-                    int nb = neigh[3 * t + j];
-                    if (nb >= 0 && !removed[nb] && !seen[nb]
-                            && !segSet.contains(key(tc.corner((j + 1) % 3), tc.corner((j + 2) % 3)))) {
-                        seen[nb] = true;
+                    int nb = nbr[3 * t + j];
+                    if (nb >= 0 && !removed[nb] && !isSegmentEdge(t, j)) {
+                        removed[nb] = true;
                         queue.add(nb);
                     }
                 }
             }
+            return removed;
         }
-        return attr;
-    }
 
-    private static void flood(List<Corners> tris, int[] neigh, Set<Long> segSet,
-                              boolean[] removed, ArrayDeque<Integer> queue) {
-        while (!queue.isEmpty()) {
-            int t = queue.poll();
-            Corners tc = tris.get(t);
-            for (int j = 0; j < 3; j++) {
-                int nb = neigh[3 * t + j];
-                if (nb >= 0 && !removed[nb]
-                        && !segSet.contains(key(tc.corner((j + 1) % 3), tc.corner((j + 2) % 3)))) {
-                    removed[nb] = true;
-                    queue.add(nb);
+        double @Nullable [] attributeRegions(boolean[] removed, List<Region> regions) {
+            if (regions.isEmpty()) {
+                return null;
+            }
+            double[] attr = new double[nt];
+            for (Region region : regions) {
+                int start = locate(region.site.x, region.site.y);
+                if (start < 0 || removed[start]) {
+                    continue;
+                }
+                ArrayDeque<Integer> queue = new ArrayDeque<>();
+                boolean[] seen = new boolean[nt];
+                seen[start] = true;
+                queue.add(start);
+                while (!queue.isEmpty()) {
+                    int t = queue.poll();
+                    attr[t] = region.attribute;
+                    for (int j = 0; j < 3; j++) {
+                        int nb = nbr[3 * t + j];
+                        if (nb >= 0 && !removed[nb] && !seen[nb] && !isSegmentEdge(t, j)) {
+                            seen[nb] = true;
+                            queue.add(nb);
+                        }
+                    }
                 }
             }
+            return attr;
         }
-    }
 
-    /* The first triangle whose closed region contains (x,y). On-edge counts, so
-       a seed lying exactly on a triangle edge still locates a triangle (it would
-       be missed by a strictly-inside test). */
-    private static int locate(Points pts, List<Corners> tris, double x, double y) {
-        for (int i = 0; i < tris.size(); i++) {
-            Corners t = tris.get(i);
-            int s1 = Geometry.orient2d(pts, t.a, t.b, x, y);
-            int s2 = Geometry.orient2d(pts, t.b, t.c, x, y);
-            int s3 = Geometry.orient2d(pts, t.c, t.a, x, y);
-            boolean nonNeg = s1 >= 0 && s2 >= 0 && s3 >= 0;
-            boolean nonPos = s1 <= 0 && s2 <= 0 && s3 <= 0;
-            if ((nonNeg || nonPos) && !(s1 == 0 && s2 == 0 && s3 == 0)) {
-                return i;
+        /* The first triangle whose closed region contains (x,y). On-edge counts, so
+           a seed lying exactly on a triangle edge still locates a triangle. */
+        private int locate(double x, double y) {
+            for (int i = 0; i < nt; i++) {
+                int s1 = Geometry.orient2d(pts, cor[3 * i], cor[3 * i + 1], x, y);
+                int s2 = Geometry.orient2d(pts, cor[3 * i + 1], cor[3 * i + 2], x, y);
+                int s3 = Geometry.orient2d(pts, cor[3 * i + 2], cor[3 * i], x, y);
+                boolean nonNeg = s1 >= 0 && s2 >= 0 && s3 >= 0;
+                boolean nonPos = s1 <= 0 && s2 <= 0 && s3 <= 0;
+                if ((nonNeg || nonPos) && !(s1 == 0 && s2 == 0 && s3 == 0)) {
+                    return i;
+                }
             }
+            return -1;
         }
-        return -1;
-    }
 
-    /* --- output -------------------------------------------------------------- */
+        /* --- output ---------------------------------------------------------- */
 
-    private static TriangleMesherOutput2 buildOutput(List<Corners> tris, boolean[] removed,
-                                                     double @Nullable [] attr, Pslg pslg) {
-        List<Integer> keep = new ArrayList<>();
-        for (int i = 0; i < tris.size(); i++) {
-            if (!removed[i]) {
-                keep.add(i);
+        TriangleMesherOutput2 buildOutput(boolean[] removed, double @Nullable [] attr, Pslg pslg) {
+            int[] remap = new int[nt];
+            Arrays.fill(remap, -1);
+            int t = 0;
+            for (int i = 0; i < nt; i++) {
+                if (!removed[i]) {
+                    remap[i] = t++;
+                }
             }
-        }
-        int t = keep.size();
-
-        /* Corners of the kept triangles, then their adjacency over the compacted
-           indexing - assembled into the interleaved {@link Triangles} layout. */
-        int[] corner = new int[3 * t];
-        for (int i = 0; i < t; i++) {
-            Corners tr = tris.get(keep.get(i));
-            corner[3 * i] = tr.a;
-            corner[3 * i + 1] = tr.b;
-            corner[3 * i + 2] = tr.c;
-        }
-        double[] outAttr = null;
-        if (attr != null) {
-            outAttr = new double[t];
-            for (int i = 0; i < t; i++) {
-                outAttr[i] = attr[keep.get(i)];
+            int[] triData = new int[6 * t];
+            double[] outAttr = attr != null ? new double[t] : null;
+            for (int i = 0; i < nt; i++) {
+                if (removed[i]) {
+                    continue;
+                }
+                int ni = remap[i];
+                triData[6 * ni] = cor[3 * i];
+                triData[6 * ni + 1] = cor[3 * i + 1];
+                triData[6 * ni + 2] = cor[3 * i + 2];
+                for (int j = 0; j < 3; j++) {
+                    int nb = nbr[3 * i + j];
+                    triData[6 * ni + 3 + j] = (nb < 0 || removed[nb]) ? -1 : remap[nb];
+                }
+                if (outAttr != null && attr != null) {
+                    outAttr[ni] = attr[i];
+                }
             }
-        }
-        int[] neigh = Topology.neighbors(t, (i, c) -> corner[3 * i + c]);
-        int[] triData = new int[6 * t];
-        for (int i = 0; i < t; i++) {
-            triData[6 * i] = corner[3 * i];
-            triData[6 * i + 1] = corner[3 * i + 1];
-            triData[6 * i + 2] = corner[3 * i + 2];
-            triData[6 * i + 3] = neigh[3 * i];
-            triData[6 * i + 4] = neigh[3 * i + 1];
-            triData[6 * i + 5] = neigh[3 * i + 2];
-        }
-        Triangles triangles = new Triangles(triData, outAttr, t);
+            Triangles triangles = new Triangles(triData, outAttr, t);
 
-        /* The PSLG is single-use (discarded after this), so the output adopts its
-           point store and recovered subsegment list directly rather than copying. */
-        return new TriangleMesherOutput2(pslg.points, triangles, pslg.segments);
+            /* The PSLG is single-use (discarded after this), so the output adopts its
+               point store and recovered subsegment list directly rather than copying. */
+            return new TriangleMesherOutput2(pslg.points, triangles, pslg.segments);
+        }
     }
 
     /* --- geometry helpers ---------------------------------------------------- */
-
-    private static boolean isEdge(List<Corners> tris, int a, int b) {
-        for (Corners t : tris) {
-            boolean ha = t.a == a || t.b == a || t.c == a;
-            boolean hb = t.a == b || t.b == b || t.c == b;
-            if (ha && hb) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     private static boolean cross(Points pts, int u, int v, int a, int b) {
         int d1 = orient(pts, a, b, u), d2 = orient(pts, a, b, v);
@@ -437,12 +627,8 @@ public final class ConstrainedDelaunayTriangulator {
         return orient(pts, p, q, u) * orient(pts, p, q, v) < 0;
     }
 
-    private static Corners ccw(Points pts, int a, int b, int c) {
-        return orient(pts, a, b, c) >= 0 ? new Corners(a, b, c) : new Corners(a, c, b);
-    }
-
     /** Orientation of (a, b, c) - the single orientation entry the
-        construction-phase helpers share, over the working {@link Points} store. */
+        construction-phase code shares, over the working {@link Points} store. */
     private static int orient(Points pts, int a, int b, int c) {
         return Geometry.orient2d(pts, a, b, c);
     }

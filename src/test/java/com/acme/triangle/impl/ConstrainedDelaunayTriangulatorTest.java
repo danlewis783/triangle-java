@@ -10,6 +10,7 @@ import com.acme.triangle.contract.ScenarioFixtures;
 import com.acme.triangle.contract.ScenarioFixtures.Scenario;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
@@ -63,6 +64,48 @@ class ConstrainedDelaunayTriangulatorTest {
         assertThat(hasOutputSegment(o, 0, 4)).as("(0,4) recovered").isTrue();
         assertThat(hasOutputSegment(o, 4, 1)).as("(4,1) recovered").isTrue();
         assertThat(hasOutputSegment(o, 0, 1)).as("un-split (0,1) NOT present").isFalse();
+    }
+
+    /**
+     * Stress the segment-recovery path: a dense interior point cloud with a fan of
+     * long constraints from one corner to scattered far points, each crossing many
+     * Delaunay edges, so recovery does a large number of local walks and flips. The
+     * far points are placed off the corner diagonals so no constraint is collinear
+     * with another vertex (a separate, pre-existing degeneracy). The result must
+     * still be a contract-valid constrained Delaunay mesh with the constraints
+     * recovered as edges.
+     */
+    @Test
+    void recoversManyCrossingConstraintsIntoAValidMesh() {
+        /* corners, then four far points at distinct angles from corner 0 (none at
+           45 degrees, so none collinear with a corner), then a dense interior. */
+        double[] fixed = {
+                0, 0, 1, 0, 1, 1, 0, 1,
+                0.92, 0.28, 0.85, 0.62, 0.55, 0.95, 0.95, 0.45,
+        };
+        Random rng = new Random(42);
+        int interior = 400;
+        int total = 8 + interior;
+        double[] pts = new double[2 * total];
+        System.arraycopy(fixed, 0, pts, 0, fixed.length);
+        for (int i = 8; i < total; i++) {
+            pts[2 * i] = 0.02 + 0.96 * rng.nextDouble();
+            pts[2 * i + 1] = 0.02 + 0.96 * rng.nextDouble();
+        }
+
+        TriangleMesherInput in = new TriangleMesherInput();
+        in.pointList = pts;
+        in.numberOfPoints = total;
+        in.segmentList = new int[]{0, 1, 1, 2, 2, 3, 3, 0, 0, 4, 0, 5, 0, 6, 0, 7};  // box + fan
+        in.segmentMarkerList = new int[]{1, 1, 1, 1, 2, 2, 2, 2};
+        in.numberOfSegments = 8;
+        in.quiet = true;
+
+        TriangleMesherOutput o = ConstrainedDelaunayTriangulator.triangulate(in);
+
+        assertThat(o.numberOfTriangles).as("stress case produced triangles").isGreaterThan(interior);
+        assertThat(MeshValidator.validate(o, in))
+                .as("stress CDT contract violations").isEmpty();
     }
 
     private static boolean hasOutputSegment(TriangleMesherOutput o, int a, int b) {
