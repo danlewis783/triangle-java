@@ -1,38 +1,39 @@
 package com.acme.triangle;
 
+import com.google.common.collect.ImmutableList;
+
 import java.util.List;
 
 /**
- * Output of the Java meshing pipeline in its modelled form: a {@link Points}
- * store, the {@link ImmutableTriangle}s (corners, neighbour links and region
+ * Output of the Java meshing pipeline in its modelled form: a {@code List<Point>}
+ * of vertices, the {@link ImmutableTriangle}s (corners, neighbour links and region
  * attribute), the recovered {@link Constraint} subsegments, and a
  * {@code hasAttributes} flag. The flag records whether the mesh carries region
  * attributes at all, distinguishing "no regions" from "regions whose attribute
  * is 0.0" - a distinction the per-triangle attribute value alone cannot make,
- * since both leave every triangle at 0.0. The points keep a structure-of-arrays
- * store - a large, hot, coordinate-heavy collection - while the triangles and
- * subsegments are plain lists, the same shape {@link TriangleMesherInput2}
- * carries its segments in. The pipeline ({@code ConstrainedDelaunayTriangulator}
+ * since both leave every triangle at 0.0. The points, triangles, and subsegments
+ * are held as plain immutable lists, the same shape {@link TriangleMesherInput2}
+ * carries its data in. The pipeline ({@code ConstrainedDelaunayTriangulator}
  * and {@code IncrementalCdt}) produces and threads this through directly; it is
  * marshalled back to the flat public {@link TriangleMesherOutput} via {@link
  * #toFlat} only at the {@link com.acme.triangle.TriangleMesher} boundary.
  */
 public final class TriangleMesherOutput2 {
 
-    private final Points points;
-    private final List<ImmutableTriangle> triangles;
-    private final List<Constraint> segments;
+    private final ImmutableList<Point> points;
+    private final ImmutableList<ImmutableTriangle> triangles;
+    private final ImmutableList<Constraint> segments;
     private final boolean hasAttributes;
 
-    public TriangleMesherOutput2(Points points, List<ImmutableTriangle> triangles,
+    public TriangleMesherOutput2(List<Point> points, List<ImmutableTriangle> triangles,
             List<Constraint> segments, boolean hasAttributes) {
-        this.points = points;
-        this.triangles = triangles;
-        this.segments = segments;
+        this.points = ImmutableList.copyOf(points);
+        this.triangles = ImmutableList.copyOf(triangles);
+        this.segments = ImmutableList.copyOf(segments);
         this.hasAttributes = hasAttributes;
     }
 
-    public Points getPoints() {
+    public List<Point> getPoints() {
         return points;
     }
 
@@ -59,7 +60,7 @@ public final class TriangleMesherOutput2 {
     public TriangleMesherOutput toFlat() {
         TriangleMesherOutput result = new TriangleMesherOutput();
         result.numberOfPoints = points.size();
-        result.pointList = points.toArray();
+        result.pointList = PointUtils.flatten(points);
 
         int t = triangles.size();
         result.numberOfTriangles = t;

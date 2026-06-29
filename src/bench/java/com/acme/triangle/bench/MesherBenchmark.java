@@ -8,7 +8,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
-import java.util.Random;
 
 /**
  * Micro-benchmark comparing the pure-Java mesher with the native (JNA) one.
@@ -38,8 +37,6 @@ import java.util.Random;
  * marshalling, not Triangle's compute.
  */
 public final class MesherBenchmark {
-
-    private static final long SYNTHETIC_SEED = 1L;
 
     private MesherBenchmark() {
     }
@@ -81,23 +78,23 @@ public final class MesherBenchmark {
         System.out.println("mode: light");
         printHeader();
 
-        row(java, nat, "cdt_50", square(50, 0), 10);
-        row(java, nat, "cdt_100", square(100, 0), 5);
-        row(java, nat, "quality_10", square(10, 20), 5);
-        row(java, nat, "quality_20", square(20, 20), 2);
-        row(java, nat, "area_0.010_q20", squareWithRegionArea(0, 20, 0.010), 3);
-        row(java, nat, "area_0.0075_q20", squareWithRegionArea(0, 20, 0.0075), 2);
+        row(java, nat, "cdt_50", BenchmarkInputs.square(50, 0), 10);
+        row(java, nat, "cdt_100", BenchmarkInputs.square(100, 0), 5);
+        row(java, nat, "quality_10", BenchmarkInputs.square(10, 20), 5);
+        row(java, nat, "quality_20", BenchmarkInputs.square(20, 20), 2);
+        row(java, nat, "area_0.010_q20", BenchmarkInputs.squareWithRegionArea(0, 20, 0.010), 3);
+        row(java, nat, "area_0.0075_q20", BenchmarkInputs.squareWithRegionArea(0, 20, 0.0075), 2);
     }
 
     private static void runHeavySyntheticCases(TriangleMesher java, TriangleMesher nat) {
         System.out.println("mode: heavy");
         printHeader();
 
-        row(java, nat, "cdt_200", square(200, 0), 3);
-        row(java, nat, "quality_20", square(20, 20), 2);
-        row(java, nat, "area_0.010_q20", squareWithRegionArea(0, 20, 0.010), 3);
-        row(java, nat, "area_0.0075_q20", squareWithRegionArea(0, 20, 0.0075), 2);
-        row(java, nat, "area_0.005_q20", squareWithRegionArea(0, 20, 0.005), 2);
+        row(java, nat, "cdt_200", BenchmarkInputs.square(200, 0), 3);
+        row(java, nat, "quality_20", BenchmarkInputs.square(20, 20), 2);
+        row(java, nat, "area_0.010_q20", BenchmarkInputs.squareWithRegionArea(0, 20, 0.010), 3);
+        row(java, nat, "area_0.0075_q20", BenchmarkInputs.squareWithRegionArea(0, 20, 0.0075), 2);
+        row(java, nat, "area_0.005_q20", BenchmarkInputs.squareWithRegionArea(0, 20, 0.005), 2);
         row(java, nat, "hole12_q20_a0.010", rectangleWithPolygonHole(12, 20, 0.010), 2);
     }
 
@@ -230,51 +227,6 @@ public final class MesherBenchmark {
             return s.substring(0, width);
         }
         return s.substring(0, width - 3) + "...";
-    }
-
-    private static TriangleMesherInput square(int interior, double q) {
-        Random rng = new Random(SYNTHETIC_SEED);
-        int n = 4 + interior;
-        double[] pts = new double[2 * n];
-        pts[0] = 0;
-        pts[1] = 0;
-        pts[2] = 1;
-        pts[3] = 0;
-        pts[4] = 1;
-        pts[5] = 1;
-        pts[6] = 0;
-        pts[7] = 1;
-
-        for (int i = 4; i < n; i++) {
-            pts[2 * i] = 0.1 + 0.8 * rng.nextDouble();
-            pts[2 * i + 1] = 0.1 + 0.8 * rng.nextDouble();
-        }
-
-        TriangleMesherInput in = new TriangleMesherInput();
-        in.pointList = pts;
-        in.numberOfPoints = n;
-        in.segmentList = new int[]{0, 1, 1, 2, 2, 3, 3, 0};
-        in.segmentMarkerList = new int[]{1, 1, 1, 1};
-        in.numberOfSegments = 4;
-        in.minAngleDegrees = q;
-        in.quiet = true;
-        return in;
-    }
-
-    /**
-     * Synthetic square case with one region-wide maximum-area constraint.
-     * <p>
-     * This is the simplest way to force significantly more refinement than the
-     * original point-only synthetic cases. The single region seed at the centre
-     * applies a positive max area across the meshed domain, and the optional
-     * angle bound adds shape refinement on top.
-     */
-    private static TriangleMesherInput squareWithRegionArea(int interior, double q,
-                                                            double maxArea) {
-        TriangleMesherInput in = square(interior, q);
-        in.regionList = new double[]{0.5, 0.5, 1.0, maxArea};
-        in.numberOfRegions = 1;
-        return in;
     }
 
     /**

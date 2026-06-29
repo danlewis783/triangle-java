@@ -1,19 +1,20 @@
 package com.acme.triangle.impl;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.DynamicTest.dynamicTest;
-
-import com.acme.triangle.Points;
+import com.acme.triangle.PointUtils;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.contract.MeshValidator;
 import com.acme.triangle.contract.ScenarioFixtures;
 import com.acme.triangle.contract.ScenarioFixtures.Scenario;
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.TestFactory;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.TestFactory;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
 /**
  * Phase-1 port test: the pure-Java {@link DelaunayTriangulator}, run on each
@@ -34,8 +35,7 @@ class DelaunayTriangulatorTest {
         for (Scenario s : ScenarioFixtures.all()) {
             tests.add(dynamicTest(s.name, () -> {
                 TriangleMesherInput in = s.input;
-                List<Corners> tris = DelaunayTriangulator.triangulate(
-                        new Points(in.pointList, in.numberOfPoints));
+                List<Corners> tris = DelaunayTriangulator.triangulate(PointUtils.toImmutableList(in.numberOfPoints, in.pointList));
                 TriangleMesherOutput o = toFlatMesh(in.pointList, in.numberOfPoints, tris);
                 assertThat(o.numberOfTriangles)
                         .as("%s produced triangles", s.name).isGreaterThan(0);

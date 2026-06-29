@@ -3,9 +3,9 @@ package com.acme.triangle.impl;
 import com.acme.triangle.Constraint;
 import com.acme.triangle.ImmutableTriangle;
 import com.acme.triangle.Point;
-import com.acme.triangle.Points;
 import com.acme.triangle.Triangle;
 import com.acme.triangle.TriangleMesherOutput2;
+import com.google.common.collect.ImmutableList;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayDeque;
@@ -48,7 +48,7 @@ import java.util.Set;
  */
 final class IncrementalCdt {
 
-    private final Points points;                              /* coordinates per vertex */
+    private final List<Point> points = new ArrayList<>(); /* coordinates per vertex */
     private final List<Provenance> provenances = new ArrayList<>();  /* identity per vertex */
     private final List<@Nullable Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
     private final boolean haveAttr;                           /* whether triangles carry a region attribute */
@@ -87,10 +87,11 @@ final class IncrementalCdt {
 
     IncrementalCdt(TriangleMesherOutput2 base) {
         /* Adopt the modelled stores the CDT just built and handed over (it is a
-           transient, used by nobody else): the growable Points becomes the mesh's
-           vertex store, and the triangles already carry compacted neighbour links,
-           so construction relinks nothing - no from-scratch adjacency rebuild. */
-        points = base.getPoints();
+           transient, used by nobody else): the modelled point list seeds the
+           mesh's growable vertex store, and the triangles already carry compacted
+           neighbour links, so construction relinks nothing - no from-scratch
+           adjacency rebuild. */
+        points.addAll(base.getPoints());
         for (int i = 0; i < points.size(); i++) {
             provenances.add(new Provenance(VertexType.INPUT, -1, -1));
         }
@@ -131,7 +132,7 @@ final class IncrementalCdt {
        are mutated in place (slots reused/nulled), so the references are stable;
        dead triangles appear as null and scanning consumers must skip them. */
 
-    Points pointsView() {
+    List<Point> pointsView() {
         return points;
     }
 
@@ -177,7 +178,8 @@ final class IncrementalCdt {
         if (start < 0) {
             throw new IllegalArgumentException("point is not inside the domain");
         }
-        int pIdx = points.add(p);
+        points.add(p);
+        int pIdx = points.size() - 1;
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
         insertViaCavity(pIdx, new int[]{start}, -1L);
         return pIdx;
@@ -206,7 +208,8 @@ final class IncrementalCdt {
         if (encroached >= 0) {
             return encroached;                  /* p encroaches a subsegment; do not insert */
         }
-        int pIdx = points.add(p);
+        points.add(p);
+        int pIdx = points.size() - 1;
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
         commitCavity(pIdx, cavity, fan);
         return -1;
@@ -228,14 +231,25 @@ final class IncrementalCdt {
      */
     int splitSegment(int segIndex) {
         Segment seg = segments.get(segIndex);
-        int a = seg.a, b = seg.b, marker = seg.marker, origOrg = seg.origOrg, origDest = seg.origDest;
+        int a = seg.a;
+        int b = seg.b;
+        int marker = seg.marker;
+        int origOrg = seg.origOrg;
+        int origDest = seg.origDest;
         int[] seeds = incidentTriangles(a, b);
         if (seeds.length == 0) {
             throw new IllegalStateException("segment (" + a + "," + b + ") is not an edge");
         }
         double frac = shellSplitFraction(a, b);
-        double ax = points.x(a), ay = points.y(a), bx = points.x(b), by = points.y(b);
-        int mIdx = points.add(ax + frac * (bx - ax), ay + frac * (by - ay));
+        Point ptA = points.get(a);
+        Point ptB = points.get(b);
+        double ax = ptA.getX();
+        double ay = ptA.getY();
+        double bx = ptB.getX();
+        double by = ptB.getY();
+        Point newPt = new Point(ax + frac * (bx - ax), ay + frac * (by - ay));
+        points.add(newPt);
+        int mIdx = points.size() - 1;
         provenances.add(new Provenance(VertexType.SEGMENT, origOrg, origDest));
 
         segSet.remove(key(a, b));            /* let the cavity span the old segment */
@@ -314,7 +328,7 @@ final class IncrementalCdt {
     private void insertViaCavity(int pIdx, int[] seeds, long skipEdgeKey) {
         List<Integer> cavity = new ArrayList<>();
         List<BoundaryEdge> fan = new ArrayList<>();
-        gatherCavity(points.at(pIdx), seeds, skipEdgeKey, cavity, fan, false);
+        gatherCavity(points.get(pIdx), seeds, skipEdgeKey, cavity, fan, false);
         commitCavity(pIdx, cavity, fan);
     }
 
@@ -351,7 +365,8 @@ final class IncrementalCdt {
                 if (nb < 0 || cavityGen[nb] == gen) {
                     continue;
                 }
-                int u = tc.corner((j + 1) % 3), w = tc.corner((j + 2) % 3);
+                int u = tc.corner((j + 1) % 3);
+                int w = tc.corner((j + 2) % 3);
                 if (segSet.contains(key(u, w))) {
                     continue;                       /* never cross a segment */
                 }
@@ -372,7 +387,8 @@ final class IncrementalCdt {
             Triangle tc = tris.get(t);
             for (int j = 0; j < 3; j++) {
                 int nb = tc.neighbor(j);
-                int u = tc.corner((j + 1) % 3), w = tc.corner((j + 2) % 3);
+                int u = tc.corner((j + 1) % 3);
+                int w = tc.corner((j + 2) % 3);
                 long k = key(u, w);
                 boolean segment = segSet.contains(k);
                 boolean boundary = nb < 0 || cavityGen[nb] != gen || segment;
@@ -413,7 +429,9 @@ final class IncrementalCdt {
         Map<Integer, Integer> asU = new HashMap<>();
         Map<Integer, Integer> asW = new HashMap<>();
         for (BoundaryEdge f : fan) {
-            int u = f.u, w = f.w, nb = f.nb;
+            int u = f.u;
+            int w = f.w;
+            int nb = f.nb;
             int id = allocSlot(new Triangle(u, w, pIdx, -1, -1, nb, f.attr));
             lastFan.add(id);
             long uw = key(u, w);
@@ -448,7 +466,9 @@ final class IncrementalCdt {
         neighbour slot across it (or -1), and the region attribute inherited from
         the cavity triangle it came from. */
     private static final class BoundaryEdge {
-        final int u, w, nb;
+        final int u;
+        final int w;
+        final int nb;
         final double attr;
 
         BoundaryEdge(int u, int w, int nb, double attr) {
@@ -568,35 +588,44 @@ final class IncrementalCdt {
         {@code (a,b)} - i.e. the angle a-p-b is obtuse, so {@code (a,b)} is
         encroached by {@code p}. */
     private boolean inDiametralDisk(int a, int b, int p) {
-        double pax = points.x(a), pay = points.y(a);
-        double pbx = points.x(b), pby = points.y(b);
-        double px = points.x(p), py = points.y(p);
+        Point ptA = points.get(a);
+        Point ptB = points.get(b);
+        Point ptP = points.get(p);
+        double pax = ptA.getX();
+        double pay = ptA.getY();
+        double pbx = ptB.getX();
+        double pby = ptB.getY();
+        double px = ptP.getX();
+        double py = ptP.getY();
         return (px - pax) * (px - pbx) + (py - pay) * (py - pby) < 0;
     }
 
     /** Whether the loose point {@code p} (a candidate vertex) lies in the diametral
         disk of subsegment {@code (a,b)} - so inserting it would encroach. */
     private boolean inDiametralDisk(int a, int b, Point p) {
-        double pax = points.x(a), pay = points.y(a);
-        double pbx = points.x(b), pby = points.y(b);
+        Point ptA = points.get(a);
+        Point ptB = points.get(b);
+        double pax = ptA.getX();
+        double pay = ptA.getY();
+        double pbx = ptB.getX();
+        double pby = ptB.getY();
         return (p.getX() - pax) * (p.getX() - pbx) + (p.getY() - pay) * (p.getY() - pby) < 0;
     }
 
     TriangleMesherOutput2 toOutput() {
-        /* Drop dead slots and remap neighbour links to the compacted indexing; the
+        /* Drop-dead slots and remap neighbour links to the compacted indexing; the
            live triangles (mutable cells) are read through the ImmutableTriangle
            view they implement. */
         List<ImmutableTriangle> outTriangles = TriangleUtils.compact(tris);
 
-        List<Constraint> outSegments = new ArrayList<>(segments.size());
+        ImmutableList.Builder<Constraint> outSegments = ImmutableList.builderWithExpectedSize(segments.size());
         for (Segment sg : segments) {
             outSegments.add(new Constraint(sg.a, sg.b, sg.marker));
         }
 
         /* A fresh, tight copy of the live coordinates - the mesh keeps its own
            growable store rather than handing out its mutable internals. */
-        Points outPoints = new Points(points.toArray(), points.size());
-        return new TriangleMesherOutput2(outPoints, outTriangles, outSegments, haveAttr);
+        return new TriangleMesherOutput2(points, outTriangles, outSegments.build(), haveAttr);
     }
 
     /**
@@ -641,16 +670,28 @@ final class IncrementalCdt {
             if (t == null) {
                 continue;
             }
-            double area = Math.abs((points.x(t.getB()) - points.x(t.getA())) * (points.y(t.getC()) - points.y(t.getA()))
-                    - (points.y(t.getB()) - points.y(t.getA())) * (points.x(t.getC()) - points.x(t.getA()))) / 2.0;
+            int a = t.getA();
+            int b = t.getB();
+            int c = t.getC();
+            Point ptA = points.get(a);
+            Point ptB = points.get(b);
+            Point ptC = points.get(c);
+            double area = Math.abs((ptB.getX() - ptA.getX()) * (ptC.getY() - ptA.getY())
+                    - (ptB.getY() - ptA.getY()) * (ptC.getX() - ptA.getX())) / 2.0;
             if (area > bestArea) {
                 bestArea = area;
                 best = i;
             }
         }
         Triangle t = tris.get(best);
-        double cx = (points.x(t.getA()) + points.x(t.getB()) + points.x(t.getC())) / 3.0;
-        double cy = (points.y(t.getA()) + points.y(t.getB()) + points.y(t.getC())) / 3.0;
+        int a = t.getA();
+        int b = t.getB();
+        int c = t.getC();
+        Point ptA = points.get(a);
+        Point ptB = points.get(b);
+        Point ptC = points.get(c);
+        double cx = (ptA.getX() + ptB.getX() + ptC.getX()) / 3.0;
+        double cy = (ptA.getY() + ptB.getY() + ptC.getY()) / 3.0;
         return new Point(cx, cy);
     }
 
@@ -691,7 +732,10 @@ final class IncrementalCdt {
     }
 
     private double dist2(int a, int b) {
-        double dx = points.x(a) - points.x(b), dy = points.y(a) - points.y(b);
+        Point ptA = points.get(a);
+        Point ptB = points.get(b);
+        double dx = ptA.getX() - ptB.getX();
+        double dy = ptA.getY() - ptB.getY();
         return dx * dx + dy * dy;
     }
 

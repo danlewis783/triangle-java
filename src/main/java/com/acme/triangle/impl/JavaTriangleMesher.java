@@ -2,7 +2,6 @@ package com.acme.triangle.impl;
 
 import com.acme.triangle.MeshContractException;
 import com.acme.triangle.Point;
-import com.acme.triangle.Points;
 import com.acme.triangle.Region;
 import com.acme.triangle.Triangle;
 import com.acme.triangle.TriangleMesher;
@@ -124,7 +123,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                null, so the scans skip them). A mutation may free/reuse slots, so a
                triangle index is only valid until the next split/insert. */
             List<Triangle> tris = mesh.trianglesView();
-            Points points = mesh.pointsView();
+            List<Point> points = mesh.pointsView();
 
             /* Ruppert: clear every encroached subsegment before any bad triangle.
                The mesh maintains the encroached candidates incrementally, so this
@@ -191,9 +190,13 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         if (tc == null) {
             return;
         }
-        Points points = mesh.pointsView();
-        int ia = tc.getA(), ib = tc.getB(), ic = tc.getC();
-        Point a = points.at(ia), b = points.at(ib), c = points.at(ic);
+        List<Point> points = mesh.pointsView();
+        int ia = tc.getA();
+        int ib = tc.getB();
+        int ic = tc.getC();
+        Point a = points.get(ia);
+        Point b = points.get(ib);
+        Point c = points.get(ic);
         boolean isBad = false;
         if (!maxAreaByAttr.isEmpty() && mesh.hasAttributes()) {
             Double maxArea = maxAreaByAttr.get(tc.getAttr());
@@ -283,7 +286,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
      * concentric-shell segment splitting in {@link IncrementalCdt} is what makes
      * the endpoints land equidistant so this rule can recognize them.
      */
-    private static boolean unsplittable(IncrementalCdt cdt, Points points,
+    private static boolean unsplittable(IncrementalCdt cdt, List<Point> points,
                                         int ia, int ib, int ic) {
         double ab = dist2(points, ia, ib);
         double bc = dist2(points, ib, ic);
@@ -333,12 +336,17 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
      * is numerically unreliable for skinny triangles). Aims a small margin above
      * the bound so the new triangle is not re-selected at exactly the threshold.
      */
-    private static Point offCentre(List<Triangle> tris, Points points,
+    private static Point offCentre(List<Triangle> tris, List<Point> points,
                                    int t, double boundDegrees) {
         Triangle tc = tris.get(t);
-        Point a = points.at(tc.getA()), b = points.at(tc.getB()), c = points.at(tc.getC());
+        Point a = points.get(tc.getA());
+        Point b = points.get(tc.getB());
+        Point c = points.get(tc.getC());
 
-        Point p, q, r;                             /* p,q = shortest edge; r = apex */
+        //p,q = shortest edge; r = apex
+        Point p;
+        Point q;
+        Point r;
         double ab = dist2(a, b), bc = dist2(b, c), ca = dist2(c, a);
         if (ab <= bc && ab <= ca) {
             p = a; q = b; r = c;
@@ -383,20 +391,37 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     }
 
     private static double dist2(Point a, Point b) {
-        double dx = a.getX() - b.getX(), dy = a.getY() - b.getY();
+        double ax = a.getX();
+        double ay = a.getY();
+
+        double bx = b.getX();
+        double by = b.getY();
+
+        double dx = ax - bx;
+        double dy = ay - by;
+
         return dx * dx + dy * dy;
     }
 
-    private static double dist2(Points points, int a, int b) {
-        double dx = points.x(a) - points.x(b), dy = points.y(a) - points.y(b);
-        return dx * dx + dy * dy;
+    private static double dist2(List<Point> points, int a, int b) {
+        return dist2(points.get(a), points.get(b));
     }
 
-    private static Point circumcentre(List<Triangle> tris, Points points, int t) {
-        Triangle tc = tris.get(t);
-        double ax = points.x(tc.getA()), ay = points.y(tc.getA());
-        double bx = points.x(tc.getB()), by = points.y(tc.getB());
-        double cx = points.x(tc.getC()), cy = points.y(tc.getC());
+    private static Point circumcentre(List<Triangle> tris, List<Point> points, int t) {
+        Triangle triangle = tris.get(t);
+
+        Point pointA = points.get(triangle.getA());
+        double ax = pointA.getX();
+        double ay = pointA.getY();
+
+        Point pointB = points.get(triangle.getB());
+        double bx = pointB.getX();
+        double by = pointB.getY();
+
+        Point pointC = points.get(triangle.getC());
+        double cx = pointC.getX();
+        double cy = pointC.getY();
+
         double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
         double a2 = ax * ax + ay * ay;
         double b2 = bx * bx + by * by;

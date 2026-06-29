@@ -2,8 +2,8 @@ package com.acme.triangle.impl;
 
 import com.acme.triangle.DefaultImmutableTriangle;
 import com.acme.triangle.ImmutableTriangle;
+import com.google.common.collect.ImmutableList;
 import org.jspecify.annotations.Nullable;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -29,7 +29,7 @@ final class TriangleUtils {
      * @return the live triangles in slot order, neighbour ids remapped to the
      *         compacted output indexing (dead neighbours become a boundary, -1)
      */
-    static List<ImmutableTriangle> compact(List<? extends @Nullable ImmutableTriangle> slots) {
+    static ImmutableList<ImmutableTriangle> compact(List<? extends @Nullable ImmutableTriangle> slots) {
         int[] remap = new int[slots.size()];
         Arrays.fill(remap, -1);
         int n = 0;
@@ -38,7 +38,7 @@ final class TriangleUtils {
                 remap[i] = n++;
             }
         }
-        List<ImmutableTriangle> packed = new ArrayList<>(n);
+        ImmutableList.Builder<ImmutableTriangle> packed = ImmutableList.builderWithExpectedSize(n);
         for (ImmutableTriangle t : slots) {
             if (t == null) {
                 continue;
@@ -47,7 +47,7 @@ final class TriangleUtils {
                     mapNbr(t.getN0(), remap), mapNbr(t.getN1(), remap), mapNbr(t.getN2(), remap),
                     t.getAttr()));
         }
-        return packed;
+        return packed.build();
     }
 
     /**

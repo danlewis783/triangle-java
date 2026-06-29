@@ -1,7 +1,7 @@
 package com.acme.triangle;
 
-import java.util.ArrayList;
-import java.util.Collections;
+import com.google.common.collect.ImmutableList;
+
 import java.util.List;
 
 /**
@@ -13,11 +13,11 @@ public class MeshContractException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
-    private final List<String> violations;
+    private final ImmutableList<String> violations;
 
     public MeshContractException(String message, List<String> violations) {
         super(message + ": " + violations);
-        this.violations = Collections.unmodifiableList(new ArrayList<>(violations));
+        this.violations = ImmutableList.copyOf(violations);
     }
 
     /** The contract violations that caused this exception. */

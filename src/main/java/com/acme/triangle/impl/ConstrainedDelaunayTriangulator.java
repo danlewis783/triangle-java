@@ -4,7 +4,6 @@ import com.acme.triangle.Constraint;
 import com.acme.triangle.DefaultImmutableTriangle;
 import com.acme.triangle.ImmutableTriangle;
 import com.acme.triangle.Point;
-import com.acme.triangle.Points;
 import com.acme.triangle.Region;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherInput2;
@@ -50,7 +49,7 @@ public final class ConstrainedDelaunayTriangulator {
     static TriangleMesherOutput2 triangulate(TriangleMesherInput2 in) {
         /* 1. Split crossing segments. */
         Pslg pslg = splitIntersections(in);
-        Points pts = pslg.points;
+        List<Point> pts = pslg.getPoints();
 
         /* 2. Initial Delaunay of all points. */
         List<Corners> tris = DelaunayTriangulator.triangulate(pts);
@@ -81,19 +80,27 @@ public final class ConstrainedDelaunayTriangulator {
      * produced by {@link #splitIntersections}.
      */
     private static final class Pslg {
-        final Points points;
-        final List<Constraint> segments;
+        private final List<Point> points;
+        private final List<Constraint> segments;
 
-        Pslg(Points points, List<Constraint> segments) {
+        private Pslg(List<Point> points, List<Constraint> segments) {
             this.points = points;
             this.segments = segments;
+        }
+
+        private List<Point> getPoints() {
+            return points;
+        }
+
+        private List<Constraint> getSegments() {
+            return segments;
         }
     }
 
     private static Pslg splitIntersections(TriangleMesherInput2 in) {
         /* Growable working copy: intersection points are appended as crossings
            are resolved (the input store must not be mutated). */
-        Points pts = new Points(in.getPoints().toArray(), in.getPoints().size());
+        List<Point> pts = new ArrayList<>(in.getPoints());
         List<Constraint> segs = new ArrayList<>(in.getSegments());
 
         boolean changed = true;
@@ -104,12 +111,16 @@ public final class ConstrainedDelaunayTriangulator {
             crossings:
             for (int i = 0; i < segs.size(); i++) {
                 for (int j = i + 1; j < segs.size(); j++) {
-                    Constraint a = segs.get(i), b = segs.get(j);
+                    Constraint a = segs.get(i);
+                    Constraint b = segs.get(j);
                     if (share(a, b)) {
                         continue;
                     }
                     if (cross(pts, a.getA(), a.getB(), b.getA(), b.getB())) {
-                        int c = pts.add(intersection(pts, a.getA(), a.getB(), b.getA(), b.getB()));
+                        Point intersection = intersection(pts, a.getA(), a.getB(), b.getA(), b.getB());
+                        pts.add(intersection);
+                        int size = pts.size();
+                        int c = size - 1;
                         segs.set(i, new Constraint(a.getA(), c, a.getMarker()));
                         segs.set(j, new Constraint(b.getA(), c, b.getMarker()));
                         segs.add(new Constraint(c, a.getB(), a.getMarker()));
@@ -148,22 +159,41 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     /** True if vertex v is exactly collinear with (a,b) and strictly between them. */
-    private static boolean onSegmentInterior(Points pts, int a, int b, int v) {
+    private static boolean onSegmentInterior(List<Point> pts, int a, int b, int v) {
         if (orient(pts, a, b, v) != 0) {
             return false;
         }
-        double pax = pts.x(a), pay = pts.y(a), pbx = pts.x(b), pby = pts.y(b);
-        double pvx = pts.x(v), pvy = pts.y(v);
+        Point ptA = pts.get(a);
+        Point ptB = pts.get(b);
+        Point ptV = pts.get(v);
+        double pax = ptA.getX();
+        double pay = ptA.getY();
+        double pbx = ptB.getX();
+        double pby = ptB.getY();
+        double pvx = ptV.getX();
+        double pvy = ptV.getY();
         double toA = (pvx - pax) * (pbx - pax) + (pvy - pay) * (pby - pay);
         double toB = (pvx - pbx) * (pax - pbx) + (pvy - pby) * (pay - pby);
         return toA > 0 && toB > 0;            /* strictly inside, not at an endpoint */
     }
 
-    private static Point intersection(Points pts, int p0, int p1, int q0, int q1) {
-        double x1 = pts.x(p0), y1 = pts.y(p0);
-        double x2 = pts.x(p1), y2 = pts.y(p1);
-        double x3 = pts.x(q0), y3 = pts.y(q0);
-        double x4 = pts.x(q1), y4 = pts.y(q1);
+    private static Point intersection(List<Point> pts, int p0, int p1, int q0, int q1) {
+        Point pt0 = pts.get(p0);
+        double x1 = pt0.getX();
+        double y1 = pt0.getY();
+
+        Point pt1 = pts.get(p1);
+        double x2 = pt1.getX();
+        double y2 = pt1.getY();
+
+        Point pt2 = pts.get(q0);
+        double x3 = pt2.getX();
+        double y3 = pt2.getY();
+
+        Point pt3 = pts.get(q1);
+        double x4 = pt3.getX();
+        double y4 = pt3.getY();
+
         double den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
         double t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
         return new Point(x1 + t * (x2 - x1), y1 + t * (y2 - y1));
@@ -182,14 +212,14 @@ public final class ConstrainedDelaunayTriangulator {
      */
     private static final class CdtMesh {
 
-        private final Points pts;
+        private final List<Point> pts;
         private final int nt;
         private final int[] cor;          /* 3 corner vertex indices per triangle */
         private final int[] nbr;          /* 3 neighbour triangle ids per triangle, -1 on a boundary */
         private final int[] vtri;         /* one incident triangle per vertex, for the rotation walks */
         private final Set<Long> segSet = new HashSet<>();
 
-        CdtMesh(Points pts, List<Corners> tris) {
+        CdtMesh(List<Point> pts, List<Corners> tris) {
             this.pts = pts;
             this.nt = tris.size();
             cor = new int[3 * nt];
@@ -216,7 +246,9 @@ public final class ConstrainedDelaunayTriangulator {
 
         /** The corner of triangle {@code t} that is neither {@code x} nor {@code y}. */
         private int apex(int t, int x, int y) {
-            int c0 = cor[3 * t], c1 = cor[3 * t + 1], c2 = cor[3 * t + 2];
+            int c0 = cor[3 * t];
+            int c1 = cor[3 * t + 1];
+            int c2 = cor[3 * t + 2];
             return (c0 != x && c0 != y) ? c0 : (c1 != x && c1 != y) ? c1 : c2;
         }
 
@@ -309,10 +341,12 @@ public final class ConstrainedDelaunayTriangulator {
                 collectChannelGlobal(a, b, channel);   /* degenerate walk: seed globally */
             }
             ArrayDeque<int[]> queue = new ArrayDeque<>(channel);
-            int guard = 0, cap = 50 * (channel.size() + 1) + 64;
+            int guard = 0;
+            int cap = 50 * (channel.size() + 1) + 64;
             while (!queue.isEmpty() && guard++ < cap) {
                 int[] e = queue.poll();
-                int u = e[0], v = e[1];
+                int u = e[0];
+                int v = e[1];
                 int t1 = edgeTriangle(u, v);
                 if (t1 < 0) {
                     continue;                       /* edge already flipped away */
@@ -321,7 +355,8 @@ public final class ConstrainedDelaunayTriangulator {
                 if (t2 < 0 || !cross(pts, u, v, a, b)) {
                     continue;                       /* boundary, or no longer crossing */
                 }
-                int p = apex(t1, u, v), q = apex(t2, u, v);
+                int p = apex(t1, u, v);
+                int q = apex(t2, u, v);
                 if (convex(pts, u, v, p, q)) {
                     flip(t1, t2, u, v, p, q);
                     if (cross(pts, p, q, a, b)) {
@@ -347,8 +382,10 @@ public final class ConstrainedDelaunayTriangulator {
                 return t == -1;                     /* -1: already an edge; -2: degenerate */
             }
             int ia = localIndex(t, a);
-            int u = cor[3 * t + (ia + 1) % 3], v = cor[3 * t + (ia + 2) % 3];
-            int w = 0, cap = 8 * nt + 64;
+            int u = cor[3 * t + (ia + 1) % 3];
+            int v = cor[3 * t + (ia + 2) % 3];
+            int w = 0;
+            int cap = 8 * nt + 64;
             while (w++ < cap) {
                 out.add(new int[]{u, v});
                 int t2 = acrossEdge(t, u, v);
@@ -384,7 +421,8 @@ public final class ConstrainedDelaunayTriangulator {
                     if (nb < t) {                   /* each interior edge once; skips -1 */
                         continue;
                     }
-                    int u = cor[3 * t + (j + 1) % 3], v = cor[3 * t + (j + 2) % 3];
+                    int u = cor[3 * t + (j + 1) % 3];
+                    int v = cor[3 * t + (j + 2) % 3];
                     if (cross(pts, u, v, a, b)) {
                         out.add(new int[]{u, v});
                     }
@@ -404,7 +442,8 @@ public final class ConstrainedDelaunayTriangulator {
             boolean ccw = true;
             while (true) {
                 int ia = localIndex(t, a);
-                int p = cor[3 * t + (ia + 1) % 3], q = cor[3 * t + (ia + 2) % 3];
+                int p = cor[3 * t + (ia + 1) % 3];
+                int q = cor[3 * t + (ia + 2) % 3];
                 if (p == b || q == b) {
                     return -1;                      /* (a,b) is an edge of t */
                 }
@@ -476,20 +515,24 @@ public final class ConstrainedDelaunayTriangulator {
                     stack.push(3 * t + j);
                 }
             }
-            int guard = 0, cap = 200 * (nt + 1);
+            int guard = 0;
+            int cap = 200 * (nt + 1);
             while (!stack.isEmpty() && guard++ < cap) {
                 int e = stack.pop();
-                int t = e / 3, j = e % 3;
+                int t = e / 3;
+                int j = e % 3;
                 int nb = nbr[3 * t + j];
                 if (nb < 0) {
                     continue;
                 }
-                int u = cor[3 * t + (j + 1) % 3], v = cor[3 * t + (j + 2) % 3];
+                int u = cor[3 * t + (j + 1) % 3];
+                int v = cor[3 * t + (j + 2) % 3];
                 if (segSet.contains(key(u, v))) {
                     continue;
                 }
-                int p = cor[3 * t + j], q = apex(nb, u, v);
-                if (Geometry.inCircle(pts, cor[3 * t], cor[3 * t + 1], cor[3 * t + 2], pts.at(q))
+                int p = cor[3 * t + j];
+                int q = apex(nb, u, v);
+                if (Geometry.inCircle(pts, cor[3 * t], cor[3 * t + 1], cor[3 * t + 2], pts.get(q))
                         && convex(pts, u, v, p, q)) {
                     flip(t, nb, u, v, p, q);
                     for (int k = 0; k < 3; k++) {
@@ -608,19 +651,21 @@ public final class ConstrainedDelaunayTriangulator {
 
     /* --- geometry helpers ---------------------------------------------------- */
 
-    private static boolean cross(Points pts, int u, int v, int a, int b) {
-        int d1 = orient(pts, a, b, u), d2 = orient(pts, a, b, v);
-        int d3 = orient(pts, u, v, a), d4 = orient(pts, u, v, b);
+    private static boolean cross(List<Point> pts, int u, int v, int a, int b) {
+        int d1 = orient(pts, a, b, u);
+        int d2 = orient(pts, a, b, v);
+        int d3 = orient(pts, u, v, a);
+        int d4 = orient(pts, u, v, b);
         return d1 * d2 < 0 && d3 * d4 < 0;
     }
 
-    private static boolean convex(Points pts, int u, int v, int p, int q) {
+    private static boolean convex(List<Point> pts, int u, int v, int p, int q) {
         return orient(pts, p, q, u) * orient(pts, p, q, v) < 0;
     }
 
     /** Orientation of (a, b, c) - the single orientation entry the
-        construction-phase code shares, over the working {@link Points} store. */
-    private static int orient(Points pts, int a, int b, int c) {
+        construction-phase code shares, over the working vertex list. */
+    private static int orient(List<Point> pts, int a, int b, int c) {
         return Geometry.orient2d(pts, a, b, c);
     }
 

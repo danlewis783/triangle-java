@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 
 import com.acme.triangle.Point;
-import com.acme.triangle.Points;
 import com.acme.triangle.Triangle;
 import org.jspecify.annotations.Nullable;
 
@@ -43,7 +42,7 @@ public final class DelaunayTriangulator {
      * @return the Delaunay triangles as CCW {@link Corners} over the input
      *         points (a fresh, mutable list the caller may refine in place)
      */
-    public static List<Corners> triangulate(Points points) {
+    public static List<Corners> triangulate(List<Point> points) {
         if (points.size() < 3) {
             throw new IllegalArgumentException("need at least 3 points");
         }
@@ -53,7 +52,7 @@ public final class DelaunayTriangulator {
     /**
      * The incremental triangulation in progress: a triangle arena ({@link
      * Triangle} slots carrying their own neighbour links, dead slots nulled and
-     * reused) over a working {@link Points} that is the input plus three
+     * reused) over a working {@code List<Point>} that is the input plus three
      * super-triangle vertices enclosing it. The {@code attr} field of each
      * {@link Triangle} is unused here (phase 1 has no regions).
      */
@@ -61,40 +60,68 @@ public final class DelaunayTriangulator {
 
         private static final int HILBERT_BITS = 16;
 
-        private final Points pts;                         /* input points + super-triangle */
-        private final int n;                              /* number of input points */
+        private final List<Point> pts;                         /* input points + super-triangle */
+        private final int n;                              /* number of input points (before super-triangle) */
         private final List<@Nullable Triangle> tris = new ArrayList<>();
         private final Deque<Integer> free = new ArrayDeque<>();
         private int[] cavityGen;                          /* gen-stamped cavity membership */
         private int gen;
         private int recent;                               /* a live triangle to start walks from */
 
-        Builder(Points input) {
-            n = input.size();
-            pts = new Points(input.toArray(), n);         /* growable copy; never mutate the input */
+        Builder(List<Point> pts) {
+            this.pts = new ArrayList<>(pts);         /* growable copy; never mutate the input */
+            this.n = this.pts.size();                /* capture before the super-triangle vertices are added */
             cavityGen = new int[16];
             recent = initSuperTriangle();
         }
 
-        /** Append three super-triangle vertices enclosing the input and seed the
-            arena with that single triangle; returns its slot id. */
+        /**
+         * Append three super-triangle vertices enclosing the input and seed the
+         * arena with that single triangle.
+         *
+         * @return slot id
+         */
         private int initSuperTriangle() {
-            double minx = pts.x(0), miny = pts.y(0), maxx = minx, maxy = miny;
+            Point first = pts.get(0);
+            double minx = first.getX();
+            double miny = first.getY();
+            double maxx = minx;
+            double maxy = miny;
             for (int i = 1; i < n; i++) {
-                minx = Math.min(minx, pts.x(i));
-                maxx = Math.max(maxx, pts.x(i));
-                miny = Math.min(miny, pts.y(i));
-                maxy = Math.max(maxy, pts.y(i));
+                Point ith = pts.get(i);
+                double ix = ith.getX();
+                double iy = ith.getY();
+                minx = Math.min(minx, ix);
+                maxx = Math.max(maxx, ix);
+                miny = Math.min(miny, iy);
+                maxy = Math.max(maxy, iy);
             }
             double d = Math.max(maxx - minx, maxy - miny);
             if (d <= 0) {
                 d = 1;
             }
-            double m = 1000 * d, cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
-            int sa = pts.add(cx - m, cy - m);
-            int sb = pts.add(cx + m, cy - m);
-            int sc = pts.add(cx, cy + m);                 /* (sa, sb, sc) is CCW */
-            return allocSlot(new Triangle(sa, sb, sc, -1, -1, -1, 0.0));
+            double m = 1000 * d;
+            double cx = (minx + maxx) / 2;
+            double cy = (miny + maxy) / 2;
+
+            /* (sa, sb, sc) is CCW */
+            int sa = addAndGetIndex(pts, cx - m, cy - m);
+            int sb = addAndGetIndex(pts, cx + m, cy - m);
+            int sc = addAndGetIndex(pts, cx, cy + m);
+
+            Triangle ccw = new Triangle(sa, sb, sc, -1, -1, -1, 0.0);
+
+            //noinspection UnnecessaryLocalVariable
+            int result = allocSlot(ccw);
+
+            return result;
+        }
+
+        private int addAndGetIndex(List<Point> points, double x, double y) {
+            Point newPt = new Point(x, y);
+            points.add(newPt);
+            int size = points.size();
+            return size - 1;
         }
 
         List<Corners> build() {
@@ -115,7 +142,7 @@ public final class DelaunayTriangulator {
         /** Insert input vertex {@code p}: locate its containing triangle, gather
             the cavity by flooding across neighbour links, and re-fan it around p. */
         private void insert(int p) {
-            Point pt = pts.at(p);
+            Point pt = pts.get(p);
             int start = locate(pt);
             gen++;
             List<Integer> cavity = new ArrayList<>();
@@ -271,12 +298,21 @@ public final class DelaunayTriangulator {
         /** The input point indices ordered along a Hilbert curve, so consecutive
             insertions are spatially close and each location walk is short. */
         private int[] hilbertOrder() {
-            double minx = pts.x(0), miny = pts.y(0), maxx = minx, maxy = miny;
+            Point first = pts.get(0);
+
+            double minx = first.getX();
+            double miny = first.getY();
+            double maxx = minx;
+            double maxy = miny;
+
             for (int i = 1; i < n; i++) {
-                minx = Math.min(minx, pts.x(i));
-                maxx = Math.max(maxx, pts.x(i));
-                miny = Math.min(miny, pts.y(i));
-                maxy = Math.max(maxy, pts.y(i));
+                Point p = pts.get(i);
+                double ix = p.getX();
+                double iy = p.getY();
+                minx = Math.min(minx, ix);
+                maxx = Math.max(maxx, ix);
+                miny = Math.min(miny, iy);
+                maxy = Math.max(maxy, iy);
             }
             int side = 1 << HILBERT_BITS;
             double rx = maxx > minx ? (side - 1) / (maxx - minx) : 0.0;
@@ -286,8 +322,9 @@ public final class DelaunayTriangulator {
                curve position and the index is recovered modulo n. */
             long[] packed = new long[n];
             for (int i = 0; i < n; i++) {
-                int qx = (int) ((pts.x(i) - minx) * rx);
-                int qy = (int) ((pts.y(i) - miny) * ry);
+                Point p = pts.get(i);
+                int qx = (int) ((p.getX() - minx) * rx);
+                int qy = (int) ((p.getY() - miny) * ry);
                 packed[i] = hilbertDistance(side, qx, qy) * (long) n + i;
             }
             Arrays.sort(packed);
