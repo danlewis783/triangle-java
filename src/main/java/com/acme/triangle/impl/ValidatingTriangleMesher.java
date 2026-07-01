@@ -18,16 +18,16 @@ import java.util.List;
  */
 public final class ValidatingTriangleMesher implements TriangleMesher, TriangleMesher2 {
 
-    private final TriangleMesher delegate;
+    private final TriangleMesher2 delegate;
 
-    public ValidatingTriangleMesher(TriangleMesher delegate) {
+    public ValidatingTriangleMesher(TriangleMesher2 delegate) {
         this.delegate = delegate;
     }
 
     @Override
-    public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        TriangleMesherOutput out = delegate.mesh(input);
-        List<String> violations = MeshValidator.validate(out, input);
+    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
+        TriangleMesherOutput2 out = delegate.mesh(input);
+        List<String> violations = MeshValidator.validate(out.toFlat(), input.toFlat());
         if (!violations.isEmpty()) {
             throw new MeshContractException("mesh violates the structural contract",
                     violations);
@@ -35,10 +35,10 @@ public final class ValidatingTriangleMesher implements TriangleMesher, TriangleM
         return out;
     }
 
-    /** Modelled entry point: convert to the flat form this decorator validates in,
-        then repack the result - the conversion lives on the DTOs. */
+    /** Flat entry point: repack to the modelled form this decorator validates in,
+        then marshal the result back - the conversion lives on the DTOs. */
     @Override
-    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
-        return TriangleMesherOutput2.from(mesh(input.toFlat()));
+    public TriangleMesherOutput mesh(TriangleMesherInput input) {
+        return mesh(TriangleMesherInput2.from(input)).toFlat();
     }
 }

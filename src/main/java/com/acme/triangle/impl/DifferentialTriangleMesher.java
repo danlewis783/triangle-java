@@ -23,11 +23,11 @@ import java.util.List;
  */
 public final class DifferentialTriangleMesher implements TriangleMesher, TriangleMesher2 {
 
-    private final TriangleMesher primary;
-    private final TriangleMesher reference;
+    private final TriangleMesher2 primary;
+    private final TriangleMesher2 reference;
     private final DivergenceHandler handler;
 
-    public DifferentialTriangleMesher(TriangleMesher primary, TriangleMesher reference,
+    public DifferentialTriangleMesher(TriangleMesher2 primary, TriangleMesher2 reference,
                                       DivergenceHandler handler) {
         this.primary = primary;
         this.reference = reference;
@@ -35,22 +35,24 @@ public final class DifferentialTriangleMesher implements TriangleMesher, Triangl
     }
 
     @Override
-    public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        TriangleMesherOutput primaryOut = primary.mesh(input);
-        TriangleMesherOutput referenceOut = reference.mesh(input);
+    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
+        TriangleMesherOutput2 primaryOut = primary.mesh(input);
+        TriangleMesherOutput2 referenceOut = reference.mesh(input);
 
-        List<String> primaryViolations = MeshValidator.validate(primaryOut, input);
+        /* Validation and the handler are defined over the flat DTO; convert once. */
+        TriangleMesherInput flatInput = input.toFlat();
+        List<String> primaryViolations = MeshValidator.validate(primaryOut.toFlat(), flatInput);
         if (!primaryViolations.isEmpty()) {
-            List<String> referenceViolations = MeshValidator.validate(referenceOut, input);
-            handler.onContractDivergence(input, primaryViolations, referenceViolations);
+            List<String> referenceViolations = MeshValidator.validate(referenceOut.toFlat(), flatInput);
+            handler.onContractDivergence(flatInput, primaryViolations, referenceViolations);
         }
         return primaryOut;
     }
 
-    /** Modelled entry point: convert to the flat form this decorator compares in,
-        then repack the result - the conversion lives on the DTOs. */
+    /** Flat entry point: repack to the modelled form this decorator compares in,
+        then marshal the result back - the conversion lives on the DTOs. */
     @Override
-    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
-        return TriangleMesherOutput2.from(mesh(input.toFlat()));
+    public TriangleMesherOutput mesh(TriangleMesherInput input) {
+        return mesh(TriangleMesherInput2.from(input)).toFlat();
     }
 }

@@ -10,9 +10,9 @@ import com.acme.triangle.impl.ValidatingTriangleMesher;
  * Factory for {@link TriangleMesher2} implementations and decorators - the
  * modelled-type counterpart to {@link TriangleMeshers}. Each mesher is the same
  * concrete implementation, exposed here through {@link TriangleMesher2}. The
- * decorators are the flat implementations adapted at their boundary via the
- * centralized {@link TriangleMesherInput2}/{@link TriangleMesherOutput2}
- * conversions, so a modelled delegate is bridged to the flat form they wrap.
+ * decorators are modelled-native, so a modelled delegate flows straight through
+ * without a conversion; the flat {@link TriangleMeshers} factory is the one that
+ * adapts, since only the native (JNA) mesher must run on flat arrays.
  */
 public final class TriangleMeshers2 {
 
@@ -31,12 +31,12 @@ public final class TriangleMeshers2 {
 
     /** Wrap a mesher so every input can optionally be captured as JSON. */
     public static TriangleMesher2 capturing(TriangleMesher2 delegate, String mesherName) {
-        return new CapturingTriangleMesher(asFlat(delegate), mesherName);
+        return new CapturingTriangleMesher(delegate, mesherName);
     }
 
     /** Wrap a mesher so every output is checked against the structural contract. */
     public static TriangleMesher2 validating(TriangleMesher2 delegate) {
-        return new ValidatingTriangleMesher(asFlat(delegate));
+        return new ValidatingTriangleMesher(delegate);
     }
 
     /**
@@ -52,17 +52,11 @@ public final class TriangleMeshers2 {
     public static TriangleMesher2 differential(TriangleMesher2 primary,
                                                TriangleMesher2 reference,
                                                DivergenceHandler handler) {
-        return new DifferentialTriangleMesher(asFlat(primary), asFlat(reference), handler);
+        return new DifferentialTriangleMesher(primary, reference, handler);
     }
 
     /** A {@link DivergenceHandler} that throws {@link MeshContractException}. */
     public static DivergenceHandler throwingDivergenceHandler() {
         return TriangleMeshers.throwingDivergenceHandler();
-    }
-
-    /** View a modelled mesher as the flat {@link TriangleMesher} the decorators
-        wrap, converting at the boundary via the centralized DTO conversions. */
-    private static TriangleMesher asFlat(TriangleMesher2 mesher) {
-        return input -> mesher.mesh(TriangleMesherInput2.from(input)).toFlat();
     }
 }

@@ -27,12 +27,12 @@ public final class CapturingTriangleMesher implements TriangleMesher, TriangleMe
 
     private static final AtomicLong SEQUENCE = new AtomicLong();
 
-    private final TriangleMesher delegate;
+    private final TriangleMesher2 delegate;
     private final boolean enabled;
     private final Path captureDir;
     private final String mesherName;
 
-    public CapturingTriangleMesher(TriangleMesher delegate, String mesherName) {
+    public CapturingTriangleMesher(TriangleMesher2 delegate, String mesherName) {
         this.delegate = delegate;
         this.enabled = Boolean.parseBoolean(System.getProperty(CAPTURE_CASES_PROPERTY, "false"));
         this.captureDir = resolveCaptureDir();
@@ -40,18 +40,18 @@ public final class CapturingTriangleMesher implements TriangleMesher, TriangleMe
     }
 
     @Override
-    public TriangleMesherOutput mesh(TriangleMesherInput input) {
+    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
         if (enabled) {
-            captureInput(input);
+            captureInput(input.toFlat());       /* the JSON capture format is the flat DTO */
         }
         return delegate.mesh(input);
     }
 
-    /** Modelled entry point: convert to the flat form this decorator captures and
-        delegates in, then repack the result - the conversion lives on the DTOs. */
+    /** Flat entry point: repack to the modelled form this decorator works in, then
+        marshal the result back - the conversion lives on the DTOs. */
     @Override
-    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
-        return TriangleMesherOutput2.from(mesh(input.toFlat()));
+    public TriangleMesherOutput mesh(TriangleMesherInput input) {
+        return mesh(TriangleMesherInput2.from(input)).toFlat();
     }
 
     private void captureInput(TriangleMesherInput input) {

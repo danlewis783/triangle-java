@@ -28,12 +28,12 @@ public final class TriangleMeshers {
 
     /** Wrap a mesher so every input can optionally be captured as JSON. */
     public static TriangleMesher capturing(TriangleMesher delegate, String mesherName) {
-        return new CapturingTriangleMesher(delegate, mesherName);
+        return new CapturingTriangleMesher(asModelled(delegate), mesherName);
     }
 
     /** Wrap a mesher so every output is checked against the structural contract. */
     public static TriangleMesher validating(TriangleMesher delegate) {
-        return new ValidatingTriangleMesher(delegate);
+        return new ValidatingTriangleMesher(asModelled(delegate));
     }
 
     /**
@@ -49,7 +49,7 @@ public final class TriangleMeshers {
     public static TriangleMesher differential(TriangleMesher primary,
                                               TriangleMesher reference,
                                               DivergenceHandler handler) {
-        return new DifferentialTriangleMesher(primary, reference, handler);
+        return new DifferentialTriangleMesher(asModelled(primary), asModelled(reference), handler);
     }
 
     /** A {@link DivergenceHandler} that throws {@link MeshContractException}. */
@@ -58,5 +58,13 @@ public final class TriangleMeshers {
             throw new MeshContractException(
                     "primary mesher diverged from the contract", primaryViolations);
         };
+    }
+
+    /** View a flat mesher as the modelled {@link TriangleMesher2} the decorators
+        wrap, converting at the boundary via the centralized DTO conversions. The
+        decorators are modelled-native, so only the flat {@code nativeMesher} truly
+        runs on flat arrays; wrapping it here just defers that conversion to it. */
+    private static TriangleMesher2 asModelled(TriangleMesher mesher) {
+        return input -> TriangleMesherOutput2.from(mesher.mesh(input.toFlat()));
     }
 }
