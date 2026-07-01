@@ -285,3 +285,86 @@ for *if a future input demands it*, roughly in order of likely payoff.
   comparison are built in — watch the area cases for no size regression after any
   ordering change. The §5 size table was taken straight from these `tri` vs
   `nat_tri` columns.
+
+## 7. The C-parity audit and the flat 3× (2026-07)
+
+A full pass comparing this implementation against `triangle.c`, motivated by the
+JMH sweep showing a *uniform* ~3× over native at every size — a flat ratio means
+matching asymptotics (the §2 structural work held up), so the gap had to be
+either constant factors or a technique C has that we lack. Both turned out true.
+Everything below is committed, each slice measured, the suite green throughout.
+
+### 7.1 What the audit found present (no action)
+
+Worst-first bad-triangle queue by shortest edge, maintained adjacency +
+O(cavity) insertion, incremental encroachment work queue, off-centres,
+concentric shells, Miller–Pav–Walkington skip, squared-cosine angle test,
+segment recovery by local flipping, and refinement point-location seeded from
+the bad triangle — all present on both sides. (The §5a `locate`/
+`incidentTriangles` scans had already been fixed by the time of the audit:
+insertion seeds from the bad triangle; `incidentTriangles` reads the `segTri`
+index. `rect-3x4-poly-30gon-inner`, the §5a ~25 s case, is now ~66 ms.)
+
+Deliberately still different: no free-vertex deletion (§5, declined on
+measurement); C's 4096-bucket bad-triangle queue vs our exact `PriorityQueue`
+(the heap shows at ~10% on ring-like cases — port the buckets only if a
+measurement demands it); C's divide-and-conquer initial Delaunay vs our
+incremental Hilbert-order Bowyer–Watson (same asymptotics, C has smaller
+constants; not worth the rewrite).
+
+### 7.2 Constant factors (profile-driven, not C techniques)
+
+JMH stack profiles (`-prof stack`) pinned the flat 3×:
+
+- **`Math.hypot` in `offCentre`** — two calls per off-centre; replaced with
+  `sqrt`. The same lesson as `acos` in §2.1: JDK math intrinsics are not equal.
+  (Beware the sampler's safepoint bias: it *reported* hypot at 90%; the real
+  win was ~25%.)
+- **Boxed collections on the hot paths** — `HashMap<Long, …>` edge lookups in
+  the cavity gather, the `Topology.neighbors` build, per-insertion
+  `HashMap<Integer, Integer>` fan linking, `Integer` deques. Replaced with a
+  primitive open-addressed `LongIntMap`, generation-stamped int-array fan
+  scratch, and int-array stacks. Construction 3.3×→2.2×, refinement kernel
+  2.5×→1.3×.
+- **Per-call expansion buffers in the adaptive incircle** — a per-thread
+  scratch (C keeps these on the stack) took the cocircular-ring cases another
+  ~35% down.
+
+### 7.3 C techniques that were genuinely missing (ported)
+
+- **Adaptive predicate stages** (`counterclockwiseadapt`/`incircleadapt`).
+  The A-filter previously fell straight to `BigDecimal`. Now: orient2d runs
+  B/C/D in expansions (D exact); incircle runs B/C and finishes, when B/C
+  cannot separate (only near-exactly-cocircular inputs), with an exact
+  expansion evaluation of the same determinant. No arbitrary precision remains.
+  Validated by the predicates oracle plus a 2M-case differential fuzz against
+  an independent BigDecimal reference (zero disagreements) — signs are
+  identical by construction, so mesh outputs were byte-identical, a built-in
+  correctness check (§4).
+- **Diametral-lens encroachment** (triangle.c:3925). C's default encroachment
+  region is the lens (apex angle ≥ 180° − 2·minangle), not the diametral
+  circle; the circle split ~50% more subsegments than native on thin-feature
+  inputs (`circles-r0p51-r0p5`: 15,165 vs native's 10,065 triangles → 10,681
+  after). Because the lens no longer implies "a candidate beyond a boundary
+  subsegment is rejected", the cavity gather adds C's blocked-walk rejection
+  (VIOLATINGVERTEX, triangle.c:8375) explicitly: a candidate on or beyond a
+  boundary subsegment returns it for splitting regardless of the lens. Heavy
+  suite after: quality/area triangle counts equal to or below native across
+  the board.
+- **T-junction handling that is not quadratic.** Not a refinement item, but
+  the audit's new `cdt-grid-50k` JMH scenario (integer lattice) exposed
+  `splitIntersections` re-scanning all segments × all vertices after every
+  single split: 102 s where native takes 38 ms. One sorted pass per segment
+  (subdivision creates no new candidates) plus bounding-box prefilters on both
+  the crossing and on-segment scans: 180 ms.
+
+### 7.4 Where it stands
+
+JMH (Java 8, single fork), after all of the above: construction ~2.2×
+native, refinement kernel ~1.3–1.5×, captured q=33 hole case ~1.8×, cocircular
+256-gon ~4×, thin annulus ~3.3×. The remaining premium on the cocircular
+family is adaptive-incircle inner-loop cost (expansion arithmetic per cavity
+test — C pays it too, with smaller constants) plus the `PriorityQueue`; those
+are the next levers, measurement first. The JMH sweep now covers the regimes
+that used to be invisible: `cdt-grid-50k` (degenerate predicates in
+construction) and `ref-hole/circle/rings-q33` (captured refinement cases).
