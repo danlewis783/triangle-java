@@ -10,6 +10,7 @@ import java.util.Map;
 
 import com.acme.triangle.Point;
 import com.acme.triangle.Triangle;
+import com.acme.triangle.predicate.Predicates;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -60,7 +61,8 @@ public final class DelaunayTriangulator {
 
         private static final int HILBERT_BITS = 16;
 
-        private final List<Point> pts;                         /* input points + super-triangle */
+        private double[] xy;                              /* interleaved coords: vertex i at (xy[2i], xy[2i+1]); input points + super-triangle */
+        private int size;                                 /* live vertex count in xy */
         private final int n;                              /* number of input points (before super-triangle) */
         private final List<@Nullable Triangle> tris = new ArrayList<>();
         private final Deque<Integer> free = new ArrayDeque<>();
@@ -69,10 +71,31 @@ public final class DelaunayTriangulator {
         private int recent;                               /* a live triangle to start walks from */
 
         Builder(List<Point> pts) {
-            this.pts = new ArrayList<>(pts);         /* growable copy; never mutate the input */
-            this.n = this.pts.size();                /* capture before the super-triangle vertices are added */
+            this.n = pts.size();                     /* input count, before the super-triangle vertices */
+            /* Read the input coordinates once into a flat interleaved array. The hot
+               inCircle/orient tests then load a primitive array (xy[2i]) rather than
+               chasing a List<Point> reference and two field loads per corner. Three
+               super-triangle vertices are appended below and no others are ever added
+               (the initial Delaunay inserts only existing input points), so this is
+               sized exactly for n+3 and never grows. Internal only: the triangulate()
+               contract still speaks List<Point>. */
+            this.xy = new double[2 * (n + 3)];
+            for (int i = 0; i < n; i++) {
+                Point p = pts.get(i);
+                xy[2 * i] = p.getX();
+                xy[2 * i + 1] = p.getY();
+            }
+            this.size = n;
             cavityGen = new int[16];
             recent = initSuperTriangle();
+        }
+
+        private double x(int i) {
+            return xy[2 * i];
+        }
+
+        private double y(int i) {
+            return xy[2 * i + 1];
         }
 
         /**
@@ -82,15 +105,13 @@ public final class DelaunayTriangulator {
          * @return slot id
          */
         private int initSuperTriangle() {
-            Point first = pts.get(0);
-            double minx = first.getX();
-            double miny = first.getY();
+            double minx = x(0);
+            double miny = y(0);
             double maxx = minx;
             double maxy = miny;
             for (int i = 1; i < n; i++) {
-                Point ith = pts.get(i);
-                double ix = ith.getX();
-                double iy = ith.getY();
+                double ix = x(i);
+                double iy = y(i);
                 minx = Math.min(minx, ix);
                 maxx = Math.max(maxx, ix);
                 miny = Math.min(miny, iy);
@@ -105,9 +126,9 @@ public final class DelaunayTriangulator {
             double cy = (miny + maxy) / 2;
 
             /* (sa, sb, sc) is CCW */
-            int sa = addAndGetIndex(pts, cx - m, cy - m);
-            int sb = addAndGetIndex(pts, cx + m, cy - m);
-            int sc = addAndGetIndex(pts, cx, cy + m);
+            int sa = add(cx - m, cy - m);
+            int sb = add(cx + m, cy - m);
+            int sc = add(cx, cy + m);
 
             Triangle ccw = new Triangle(sa, sb, sc, -1, -1, -1, 0.0);
 
@@ -117,11 +138,12 @@ public final class DelaunayTriangulator {
             return result;
         }
 
-        private int addAndGetIndex(List<Point> points, double x, double y) {
-            Point newPt = new Point(x, y);
-            points.add(newPt);
-            int size = points.size();
-            return size - 1;
+        /** Append a vertex, returning its index. */
+        private int add(double px, double py) {
+            int i = size++;
+            xy[2 * i] = px;
+            xy[2 * i + 1] = py;
+            return i;
         }
 
         List<Corners> build() {
@@ -142,8 +164,8 @@ public final class DelaunayTriangulator {
         /** Insert input vertex {@code p}: locate its containing triangle, gather
             the cavity by flooding across neighbour links, and re-fan it around p. */
         private void insert(int p) {
-            Point pt = pts.get(p);
-            int start = locate(pt);
+            double px = x(p), py = y(p);
+            int start = locate(px, py);
             gen++;
             List<Integer> cavity = new ArrayList<>();
             List<int[]> fan = new ArrayList<>();          /* boundary edges {u, w, outerNeighbour} */
@@ -160,7 +182,7 @@ public final class DelaunayTriangulator {
                     if (nb >= 0 && cavityGen[nb] == gen) {
                         continue;                         /* shared interior cavity edge */
                     }
-                    if (nb >= 0 && inCircle(tris.get(nb), pt)) {
+                    if (nb >= 0 && inCircle(tris.get(nb), px, py)) {
                         cavityGen[nb] = gen;
                         stack.push(nb);                   /* nb joins the cavity */
                     } else {
@@ -222,7 +244,7 @@ public final class DelaunayTriangulator {
          * immediately back the way we came. Falls back to a scan if the walk
          * stalls (defensive against a degenerate cycle).
          */
-        private int locate(Point pt) {
+        private int locate(double px, double py) {
             int t = recent, prev = -1;
             int steps = 0, limit = tris.size() + 8;
             while (steps++ <= limit) {
@@ -234,7 +256,7 @@ public final class DelaunayTriangulator {
                         continue;
                     }
                     int u = tc.corner((j + 1) % 3), w = tc.corner((j + 2) % 3);
-                    if (orient(u, w, pt) < 0) {           /* pt is outside edge (u,w) */
+                    if (orient(u, w, px, py) < 0) {       /* pt is outside edge (u,w) */
                         next = nb;
                         break;
                     }
@@ -245,14 +267,14 @@ public final class DelaunayTriangulator {
                 prev = t;
                 t = next;
             }
-            return locateByScan(pt);
+            return locateByScan(px, py);
         }
 
-        private int locateByScan(Point pt) {
+        private int locateByScan(double px, double py) {
             for (int i = 0; i < tris.size(); i++) {
                 Triangle t = tris.get(i);
-                if (t != null && orient(t.getA(), t.getB(), pt) >= 0
-                        && orient(t.getB(), t.getC(), pt) >= 0 && orient(t.getC(), t.getA(), pt) >= 0) {
+                if (t != null && orient(t.getA(), t.getB(), px, py) >= 0
+                        && orient(t.getB(), t.getC(), px, py) >= 0 && orient(t.getC(), t.getA(), px, py) >= 0) {
                     return i;
                 }
             }
@@ -285,12 +307,20 @@ public final class DelaunayTriangulator {
             }
         }
 
-        private boolean inCircle(Triangle t, Point p) {
-            return Geometry.inCircle(pts, t.getA(), t.getB(), t.getC(), p);
+        /* Predicates read the flat coordinate array directly (no List<Point> access,
+           no per-call Point allocation for the loose insertion point), routing to the
+           same robust kernel Geometry uses. */
+        private boolean inCircle(Triangle t, double px, double py) {
+            int a = t.getA(), b = t.getB(), c = t.getC();
+            return Predicates.incircle(
+                    xy[2 * a], xy[2 * a + 1],
+                    xy[2 * b], xy[2 * b + 1],
+                    xy[2 * c], xy[2 * c + 1],
+                    px, py) > 0;
         }
 
-        private int orient(int a, int b, Point p) {
-            return Geometry.orient2d(pts, a, b, p.getX(), p.getY());
+        private int orient(int a, int b, double px, double py) {
+            return Predicates.orient2d(xy[2 * a], xy[2 * a + 1], xy[2 * b], xy[2 * b + 1], px, py);
         }
 
         /* --- Hilbert-curve insertion order ----------------------------------- */
@@ -298,17 +328,14 @@ public final class DelaunayTriangulator {
         /** The input point indices ordered along a Hilbert curve, so consecutive
             insertions are spatially close and each location walk is short. */
         private int[] hilbertOrder() {
-            Point first = pts.get(0);
-
-            double minx = first.getX();
-            double miny = first.getY();
+            double minx = x(0);
+            double miny = y(0);
             double maxx = minx;
             double maxy = miny;
 
             for (int i = 1; i < n; i++) {
-                Point p = pts.get(i);
-                double ix = p.getX();
-                double iy = p.getY();
+                double ix = x(i);
+                double iy = y(i);
                 minx = Math.min(minx, ix);
                 maxx = Math.max(maxx, ix);
                 miny = Math.min(miny, iy);
@@ -322,9 +349,8 @@ public final class DelaunayTriangulator {
                curve position and the index is recovered modulo n. */
             long[] packed = new long[n];
             for (int i = 0; i < n; i++) {
-                Point p = pts.get(i);
-                int qx = (int) ((p.getX() - minx) * rx);
-                int qy = (int) ((p.getY() - miny) * ry);
+                int qx = (int) ((x(i) - minx) * rx);
+                int qy = (int) ((y(i) - miny) * ry);
                 packed[i] = hilbertDistance(side, qx, qy) * (long) n + i;
             }
             Arrays.sort(packed);
