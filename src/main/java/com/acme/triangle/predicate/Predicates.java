@@ -1,6 +1,6 @@
 package com.acme.triangle.predicate;
 
-import java.math.BigDecimal;
+import java.util.Arrays;
 
 /**
  * Robust geometric predicates: the exact sign of the orient2d and incircle
@@ -19,11 +19,10 @@ import java.math.BigDecimal;
  * :2929 {@code incircleadapt}): progressively more precise determinants built
  * from exact floating-point expansions, each with its own error bound, stopping
  * at the first stage whose sign is provably correct. For orient2d the final (D)
- * stage is fully exact; for incircle the port stops after the C stage, which
- * decides all but exactly-cocircular inputs, and falls back to the exact
- * {@link BigDecimal} determinant for those (where {@code new BigDecimal(double)}
- * is the exact value of the {@code double}, so the sign is exact for any
- * inputs).
+ * stage is fully exact; for incircle the B/C stages decide all but
+ * exactly-cocircular inputs, and those take a fully exact expansion evaluation
+ * of the same determinant ({@link #incircleExact}) - no arbitrary-precision
+ * arithmetic anywhere.
  * <p>
  * Every stage computes the <em>same</em> determinant, so the returned sign is
  * identical to the always-exact version for every input; the stages only change
@@ -82,6 +81,29 @@ public final strictfp class Predicates {
 
     private Predicates() {
     }
+
+    /**
+     * Reusable scratch for one adaptive-incircle evaluation. C keeps these
+     * fixed-size expansion buffers on the stack (triangle.c:2937); on inputs
+     * with nearly cocircular structure (points on circles, lattices) most
+     * incircle calls go adaptive, and allocating the ~8 buffers per call was
+     * measurable GC pressure. One instance per thread keeps the predicates
+     * thread-safe and allocation-free on the adaptive path.
+     */
+    private static final class IccScratch {
+        final double[] t4 = new double[4];
+        final double[] t8 = new double[8];
+        final double[] t16 = new double[16];
+        final double[] xx16 = new double[16];
+        final double[] adet = new double[32];
+        final double[] bdet = new double[32];
+        final double[] cdet = new double[32];
+        final double[] abdet = new double[64];
+        final double[] fin = new double[96];
+    }
+
+    private static final ThreadLocal<IccScratch> ICC_SCRATCH =
+            ThreadLocal.withInitial(IccScratch::new);
 
     /**
      * Orientation of the ordered triple (a, b, c).
@@ -444,40 +466,34 @@ public final strictfp class Predicates {
 
         /* Stage B: det = adx^2+ady^2 lifted over (bc), plus the b and c terms,
            each as an exact expansion over the rounded differences. */
-        double[] t4 = new double[4];
-        double[] t8a = new double[8];
-        double[] t16 = new double[16];
+        IccScratch s = ICC_SCRATCH.get();
+        double[] t4 = s.t4;
 
         double bdxcdy1 = bdx * cdy;
         double bdxcdy0 = twoProductTail(bdx, cdy, bdxcdy1);
         double cdxbdy1 = cdx * bdy;
         double cdxbdy0 = twoProductTail(cdx, bdy, cdxbdy1);
         twoTwoDiff(bdxcdy1, bdxcdy0, cdxbdy1, cdxbdy0, t4);
-        double[] adet = new double[32];
-        int alen = liftedTerm(t4, adx, ady, t8a, t16, adet);
+        int alen = liftedTerm(t4, adx, ady, s, s.adet);
 
         double cdxady1 = cdx * ady;
         double cdxady0 = twoProductTail(cdx, ady, cdxady1);
         double adxcdy1 = adx * cdy;
         double adxcdy0 = twoProductTail(adx, cdy, adxcdy1);
         twoTwoDiff(cdxady1, cdxady0, adxcdy1, adxcdy0, t4);
-        double[] bdet = new double[32];
-        int blen = liftedTerm(t4, bdx, bdy, t8a, t16, bdet);
+        int blen = liftedTerm(t4, bdx, bdy, s, s.bdet);
 
         double adxbdy1 = adx * bdy;
         double adxbdy0 = twoProductTail(adx, bdy, adxbdy1);
         double bdxady1 = bdx * ady;
         double bdxady0 = twoProductTail(bdx, ady, bdxady1);
         twoTwoDiff(adxbdy1, adxbdy0, bdxady1, bdxady0, t4);
-        double[] cdet = new double[32];
-        int clen = liftedTerm(t4, cdx, cdy, t8a, t16, cdet);
+        int clen = liftedTerm(t4, cdx, cdy, s, s.cdet);
 
-        double[] abdet = new double[64];
-        int ablen = fastExpansionSumZeroelim(alen, adet, blen, bdet, abdet);
-        double[] fin = new double[96];
-        int finlength = fastExpansionSumZeroelim(ablen, abdet, clen, cdet, fin);
+        int ablen = fastExpansionSumZeroelim(alen, s.adet, blen, s.bdet, s.abdet);
+        int finlength = fastExpansionSumZeroelim(ablen, s.abdet, clen, s.cdet, s.fin);
 
-        double det = estimate(finlength, fin);
+        double det = estimate(finlength, s.fin);
         double errBound = ICC_ERRBOUND_B * permanent;
         if (det >= errBound || -det >= errBound) {
             return sign(det);
@@ -509,47 +525,107 @@ public final strictfp class Predicates {
             return sign(det);
         }
 
-        return incircleExact(ax, ay, bx, by, cx, cy, dx, dy);
+        return incircleExact(adx, adxTail, ady, adyTail,
+                bdx, bdxTail, bdy, bdyTail, cdx, cdxTail, cdy, cdyTail);
     }
 
     /** One lifted incircle term: {@code (x^2 + y^2) * cross}, where {@code cross}
         is a four-component expansion; returns the length of {@code out}. The
-        {@code s8}/{@code s16} scratch is overwritten. */
+        scratch buffers are overwritten. */
     private static int liftedTerm(double[] cross, double x, double y,
-                                  double[] s8, double[] s16, double[] out) {
-        int xlen = scaleExpansionZeroelim(4, cross, x, s8);
-        double[] xx = new double[16];
-        int xxlen = scaleExpansionZeroelim(xlen, s8, x, xx);
-        int ylen = scaleExpansionZeroelim(4, cross, y, s8);
-        int yylen = scaleExpansionZeroelim(ylen, s8, y, s16);
-        return fastExpansionSumZeroelim(xxlen, xx, yylen, s16, out);
+                                  IccScratch s, double[] out) {
+        int xlen = scaleExpansionZeroelim(4, cross, x, s.t8);
+        int xxlen = scaleExpansionZeroelim(xlen, s.t8, x, s.xx16);
+        int ylen = scaleExpansionZeroelim(4, cross, y, s.t8);
+        int yylen = scaleExpansionZeroelim(ylen, s.t8, y, s.t16);
+        return fastExpansionSumZeroelim(xxlen, s.xx16, yylen, s.t16, out);
     }
 
-    /** Exact incircle sign via {@link BigDecimal}; the last-resort fallback for
-        (nearly) exactly cocircular inputs the adaptive stages cannot separate. */
-    private static int incircleExact(double ax, double ay,
-                                     double bx, double by,
-                                     double cx, double cy,
-                                     double dx, double dy) {
-        BigDecimal adx = bd(ax).subtract(bd(dx));
-        BigDecimal ady = bd(ay).subtract(bd(dy));
-        BigDecimal bdx = bd(bx).subtract(bd(dx));
-        BigDecimal bdy = bd(by).subtract(bd(dy));
-        BigDecimal cdx = bd(cx).subtract(bd(dx));
-        BigDecimal cdy = bd(cy).subtract(bd(dy));
+    /**
+     * The fully exact incircle sign, entered only for (nearly) exactly
+     * cocircular inputs the adaptive B/C stages cannot separate. Each
+     * coordinate difference is the two-component expansion {@code (tail,
+     * head)} - exact by construction - and the determinant
+     * {@code aLift*(b x c) + bLift*(c x a) + cLift*(a x b)} is evaluated over
+     * those expansions with the same primitives the adaptive stages use, so the
+     * result expansion is exact and its leading component carries the true
+     * sign. (Same arithmetic as the C D stage, structured as generic expansion
+     * products instead of its hand-unrolled form; this path is too rare to need
+     * the unrolling.)
+     */
+    private static int incircleExact(double adx, double adxTail, double ady, double adyTail,
+                                     double bdx, double bdxTail, double bdy, double bdyTail,
+                                     double cdx, double cdxTail, double cdy, double cdyTail) {
+        double[] eadx = {adxTail, adx};
+        double[] eady = {adyTail, ady};
+        double[] ebdx = {bdxTail, bdx};
+        double[] ebdy = {bdyTail, bdy};
+        double[] ecdx = {cdxTail, cdx};
+        double[] ecdy = {cdyTail, cdy};
 
-        BigDecimal aLift = adx.multiply(adx).add(ady.multiply(ady));
-        BigDecimal bLift = bdx.multiply(bdx).add(bdy.multiply(bdy));
-        BigDecimal cLift = cdx.multiply(cdx).add(cdy.multiply(cdy));
+        double[] bc = differenceOfProducts(ebdx, ecdy, ecdx, ebdy);
+        double[] ca = differenceOfProducts(ecdx, eady, eadx, ecdy);
+        double[] ab = differenceOfProducts(eadx, ebdy, ebdx, eady);
+        double[] aLift = sumOfProducts(eadx, eadx, eady, eady);
+        double[] bLift = sumOfProducts(ebdx, ebdx, ebdy, ebdy);
+        double[] cLift = sumOfProducts(ecdx, ecdx, ecdy, ecdy);
 
-        BigDecimal det = adx.multiply(bdy.multiply(cLift).subtract(cdy.multiply(bLift)))
-                .subtract(ady.multiply(bdx.multiply(cLift).subtract(cdx.multiply(bLift))))
-                .add(aLift.multiply(bdx.multiply(cdy).subtract(cdx.multiply(bdy))));
-        return det.signum();
+        double[] ta = mulExpansions(aLift, bc);
+        double[] tb = mulExpansions(bLift, ca);
+        double[] tc = mulExpansions(cLift, ab);
+
+        double[] tab = new double[ta.length + tb.length];
+        int tablen = fastExpansionSumZeroelim(ta.length, ta, tb.length, tb, tab);
+        double[] det = new double[tablen + tc.length];
+        int detlen = fastExpansionSumZeroelim(tablen, tab, tc.length, tc, det);
+        return sign(det[detlen - 1]);
     }
 
-    /** Exact BigDecimal value of a double (not the decimal-string rounding). */
-    private static BigDecimal bd(double d) {
-        return new BigDecimal(d);
+    /** e &otimes; f for two-component expansions, as a compact exact expansion. */
+    private static double[] mul2(double[] e, double[] f) {
+        double[] p0 = new double[4];
+        int p0len = scaleExpansionZeroelim(2, e, f[0], p0);
+        double[] p1 = new double[4];
+        int p1len = scaleExpansionZeroelim(2, e, f[1], p1);
+        double[] h = new double[p0len + p1len];
+        int hlen = fastExpansionSumZeroelim(p0len, p0, p1len, p1, h);
+        return Arrays.copyOf(h, hlen);
+    }
+
+    /** p&otimes;q - r&otimes;s over two-component expansions, compact and exact. */
+    private static double[] differenceOfProducts(double[] p, double[] q,
+                                                 double[] r, double[] s) {
+        double[] pq = mul2(p, q);
+        double[] rs = mul2(r, s);
+        for (int i = 0; i < rs.length; i++) {
+            rs[i] = -rs[i];
+        }
+        double[] h = new double[pq.length + rs.length];
+        int hlen = fastExpansionSumZeroelim(pq.length, pq, rs.length, rs, h);
+        return Arrays.copyOf(h, hlen);
+    }
+
+    /** p&otimes;q + r&otimes;s over two-component expansions, compact and exact. */
+    private static double[] sumOfProducts(double[] p, double[] q,
+                                          double[] r, double[] s) {
+        double[] pq = mul2(p, q);
+        double[] rs = mul2(r, s);
+        double[] h = new double[pq.length + rs.length];
+        int hlen = fastExpansionSumZeroelim(pq.length, pq, rs.length, rs, h);
+        return Arrays.copyOf(h, hlen);
+    }
+
+    /** e &otimes; f for arbitrary expansions: distribute one component of e at a
+        time ({@link #scaleExpansionZeroelim}) and accumulate. Exact. */
+    private static double[] mulExpansions(double[] e, double[] f) {
+        double[] acc = {0.0};
+        double[] scaled = new double[2 * f.length];
+        for (double comp : e) {
+            int slen = scaleExpansionZeroelim(f.length, f, comp, scaled);
+            double[] next = new double[acc.length + slen];
+            int nlen = fastExpansionSumZeroelim(acc.length, acc, slen, scaled, next);
+            acc = Arrays.copyOf(next, nlen);
+        }
+        return acc;
     }
 }
