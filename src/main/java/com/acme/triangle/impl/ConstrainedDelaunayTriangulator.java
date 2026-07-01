@@ -12,9 +12,8 @@ import com.acme.triangle.TriangleMesherOutput2;
 import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Constrained Delaunay triangulation of a PSLG with holes and regions
@@ -217,7 +216,9 @@ public final class ConstrainedDelaunayTriangulator {
         private final int[] cor;          /* 3 corner vertex indices per triangle */
         private final int[] nbr;          /* 3 neighbour triangle ids per triangle, -1 on a boundary */
         private final int[] vtri;         /* one incident triangle per vertex, for the rotation walks */
-        private final Set<Long> segSet = new HashSet<>();
+        /* Recovered segment edges (values unused): a primitive set, since the
+           Delaunay-restoration loop probes it once per popped edge. */
+        private final LongIntMap segSet = new LongIntMap(64);
 
         CdtMesh(List<Point> pts, List<Corners> tris) {
             this.pts = pts;
@@ -366,7 +367,7 @@ public final class ConstrainedDelaunayTriangulator {
                     queue.add(e);                   /* reflex now; retry after others flip */
                 }
             }
-            segSet.add(key(a, b));
+            segSet.put(key(a, b), 0);
         }
 
         /**
@@ -509,16 +510,17 @@ public final class ConstrainedDelaunayTriangulator {
          * of the previous full rescan per flip.
          */
         void restoreDelaunay() {
-            ArrayDeque<Integer> stack = new ArrayDeque<>();
-            for (int t = 0; t < nt; t++) {
-                for (int j = 0; j < 3; j++) {
-                    stack.push(3 * t + j);
-                }
+            /* A primitive int stack of edge slots (3*t+j): it starts with all 3T
+               edges and churns with every flip, so boxing here was measurable. */
+            int[] stack = new int[3 * nt + 16];
+            int top = 0;
+            for (int e = 0; e < 3 * nt; e++) {      /* pops 3*nt-1 first, like the old LIFO push */
+                stack[top++] = e;
             }
             int guard = 0;
             int cap = 200 * (nt + 1);
-            while (!stack.isEmpty() && guard++ < cap) {
-                int e = stack.pop();
+            while (top > 0 && guard++ < cap) {
+                int e = stack[--top];
                 int t = e / 3;
                 int j = e % 3;
                 int nb = nbr[3 * t + j];
@@ -535,9 +537,12 @@ public final class ConstrainedDelaunayTriangulator {
                 if (Geometry.inCircle(pts, cor[3 * t], cor[3 * t + 1], cor[3 * t + 2], pts.get(q))
                         && convex(pts, u, v, p, q)) {
                     flip(t, nb, u, v, p, q);
+                    if (top + 6 > stack.length) {
+                        stack = Arrays.copyOf(stack, stack.length * 2);
+                    }
                     for (int k = 0; k < 3; k++) {
-                        stack.push(3 * t + k);
-                        stack.push(3 * nb + k);
+                        stack[top++] = 3 * t + k;
+                        stack[top++] = 3 * nb + k;
                     }
                 }
             }

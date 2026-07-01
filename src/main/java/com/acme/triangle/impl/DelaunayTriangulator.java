@@ -4,9 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import com.acme.triangle.Point;
 import com.acme.triangle.Triangle;
@@ -70,6 +68,14 @@ public final class DelaunayTriangulator {
         private int gen;
         private int recent;                               /* a live triangle to start walks from */
 
+        /* Generation-stamped fan-linking scratch (vertex -> the new fan triangle
+           seeing it as u/w) - the vertex count is fixed at n+3, so these are
+           allocated once; replaces two boxed HashMaps per insertion. */
+        private final int[] fanAsU;
+        private final int[] fanAsUGen;
+        private final int[] fanAsW;
+        private final int[] fanAsWGen;
+
         Builder(List<Point> pts) {
             this.n = pts.size();                     /* input count, before the super-triangle vertices */
             /* Read the input coordinates once into a flat interleaved array. The hot
@@ -87,6 +93,10 @@ public final class DelaunayTriangulator {
             }
             this.size = n;
             cavityGen = new int[16];
+            fanAsU = new int[n + 3];
+            fanAsUGen = new int[n + 3];
+            fanAsW = new int[n + 3];
+            fanAsWGen = new int[n + 3];
             recent = initSuperTriangle();
         }
 
@@ -206,8 +216,6 @@ public final class DelaunayTriangulator {
          * once as a {@code u} and once as a {@code w}, and are linked then.
          */
         private int refan(int p, List<int[]> fan) {
-            Map<Integer, Integer> asU = new HashMap<>();
-            Map<Integer, Integer> asW = new HashMap<>();
             int last = -1;
             for (int[] f : fan) {
                 int u = f[0], w = f[1], nb = f[2];
@@ -222,18 +230,20 @@ public final class DelaunayTriangulator {
                         }
                     }
                 }
-                Integer mu = asW.get(u);
-                if (mu != null) {                         /* shares the (p,u) edge */
+                if (fanAsWGen[u] == gen) {                /* shares the (p,u) edge */
+                    int mu = fanAsW[u];
                     tris.get(id).setN1(mu);
                     tris.get(mu).setN0(id);
                 }
-                asU.put(u, id);
-                Integer mw = asU.get(w);
-                if (mw != null) {                         /* shares the (w,p) edge */
+                fanAsU[u] = id;
+                fanAsUGen[u] = gen;
+                if (fanAsUGen[w] == gen) {                /* shares the (w,p) edge */
+                    int mw = fanAsU[w];
                     tris.get(id).setN0(mw);
                     tris.get(mw).setN1(id);
                 }
-                asW.put(w, id);
+                fanAsW[w] = id;
+                fanAsWGen[w] = gen;
             }
             return last;
         }

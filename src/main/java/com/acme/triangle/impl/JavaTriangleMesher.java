@@ -359,7 +359,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         double e = Math.sqrt(dist2(p, q));
         double mx = (p.getX() + q.getX()) / 2.0, my = (p.getY() + q.getY()) / 2.0;
         double nx = -(q.getY() - p.getY()), ny = q.getX() - p.getX();       /* perpendicular to pq */
-        double nlen = Math.hypot(nx, ny);
+        /* sqrt, not Math.hypot: hypot's overflow guard made these two calls ~90%
+           of refinement time (JMH stack profile), like the old acos cost. */
+        double nlen = Math.sqrt(nx * nx + ny * ny);
         if (nlen == 0) {
             return circumcentre(tris, points, t);
         }
@@ -383,7 +385,8 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         double h = e * (beta + Math.sqrt(radicand));
 
         Point cc = circumcentre(tris, points, t);
-        double dc = Math.hypot(cc.getX() - mx, cc.getY() - my);
+        double ccdx = cc.getX() - mx, ccdy = cc.getY() - my;
+        double dc = Math.sqrt(ccdx * ccdx + ccdy * ccdy);
         if (dc > 0 && !Double.isNaN(dc) && !Double.isInfinite(dc) && h > dc) {
             h = dc;                                /* don't overshoot the circumcentre */
         }

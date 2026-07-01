@@ -12,11 +12,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * A constrained Delaunay mesh that supports incremental insertion of interior
@@ -53,15 +49,17 @@ final class IncrementalCdt {
     private final List<@Nullable Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
     private final boolean haveAttr;                           /* whether triangles carry a region attribute */
     private final List<Segment> segments = new ArrayList<>();
-    private final Set<Long> segSet = new HashSet<>();
     /* For each segment edge, one live incident triangle id - so the apexes that
        decide encroachment are an O(1) adjacency hop, not an O(T) edge->apex
-       rebuild. Maintained as the fan replaces incident triangles. */
-    private final Map<Long, Integer> segTri = new HashMap<>();
+       rebuild. Maintained as the fan replaces incident triangles. Primitive maps:
+       the cavity gather probes an edge key per neighbour test, and boxed maps
+       there dominated the refinement profile. */
+    private final LongIntMap segTri = new LongIntMap(64);
     /* Each segment edge -> its index in `segments`, so an encroached subsegment
        found by edge can be split by index (splitting keeps the first half at its
-       index). Maintained alongside segSet. */
-    private final Map<Long, Integer> segIndexByEdge = new HashMap<>();
+       index). Its key set is exactly the current segment edges, so it doubles as
+       the "is this edge a segment?" set for the cavity gather. */
+    private final LongIntMap segIndexByEdge = new LongIntMap(64);
     /* Work queue of subsegments that may be encroached (segment indices) - a
        superset of the truly-encroached set, so emptying it proves none is
        encroached. Seeded with every subsegment, then refilled with the new fan's
@@ -85,6 +83,14 @@ final class IncrementalCdt {
     private int[] cavityGen;
     private int gen;
 
+    /* Generation-stamped fan-linking scratch (vertex -> the new fan triangle
+       seeing it as u/w), replacing two boxed HashMaps per insertion; entries are
+       valid iff their stamp equals the gather's generation. */
+    private int[] fanAsU = new int[0];
+    private int[] fanAsUGen = new int[0];
+    private int[] fanAsW = new int[0];
+    private int[] fanAsWGen = new int[0];
+
     IncrementalCdt(TriangleMesherOutput2 base) {
         /* Adopt the modelled stores the CDT just built and handed over (it is a
            transient, used by nobody else): the modelled point list seeds the
@@ -106,7 +112,6 @@ final class IncrementalCdt {
         for (Constraint c : base.getSegments()) {
             int idx = segments.size();
             segments.add(new Segment(c.getA(), c.getB(), c.getMarker(), c.getA(), c.getB()));  /* original endpoints = a, b */
-            segSet.add(key(c.getA(), c.getB()));
             segIndexByEdge.put(key(c.getA(), c.getB()), idx);
             encroachQueue.add(idx);                  /* seed: every subsegment is a candidate */
         }
@@ -114,7 +119,7 @@ final class IncrementalCdt {
             Triangle t = tris.get(i);
             for (int j = 0; j < 3; j++) {
                 long k = key(t.corner(j), t.corner((j + 1) % 3));
-                if (segSet.contains(k)) {
+                if (segIndexByEdge.contains(k)) {
                     segTri.put(k, i);
                 }
             }
@@ -252,16 +257,13 @@ final class IncrementalCdt {
         int mIdx = points.size() - 1;
         provenances.add(new Provenance(VertexType.SEGMENT, origOrg, origDest));
 
-        segSet.remove(key(a, b));            /* let the cavity span the old segment */
-        segTri.remove(key(a, b));
+        segTri.remove(key(a, b));            /* let the cavity span the old segment */
         segIndexByEdge.remove(key(a, b));
         insertViaCavity(mIdx, seeds, key(a, b));
 
         int secondIndex = segments.size();
         segments.set(segIndex, new Segment(a, mIdx, marker, origOrg, origDest));
         segments.add(new Segment(mIdx, b, marker, origOrg, origDest));
-        segSet.add(key(a, mIdx));
-        segSet.add(key(mIdx, b));
         segIndexByEdge.put(key(a, mIdx), segIndex);    /* first half keeps this index */
         segIndexByEdge.put(key(mIdx, b), secondIndex);
         /* The halves are new segments incident to mIdx; back each with one of the
@@ -367,7 +369,7 @@ final class IncrementalCdt {
                 }
                 int u = tc.corner((j + 1) % 3);
                 int w = tc.corner((j + 2) % 3);
-                if (segSet.contains(key(u, w))) {
+                if (segIndexByEdge.contains(key(u, w))) {
                     continue;                       /* never cross a segment */
                 }
                 if (inCircle(tris.get(nb), p)) {
@@ -390,15 +392,13 @@ final class IncrementalCdt {
                 int u = tc.corner((j + 1) % 3);
                 int w = tc.corner((j + 2) % 3);
                 long k = key(u, w);
-                boolean segment = segSet.contains(k);
+                int segIndex = segIndexByEdge.get(k);
+                boolean segment = segIndex >= 0;
                 boolean boundary = nb < 0 || cavityGen[nb] != gen || segment;
                 if (boundary && k != skipEdgeKey) {
                     fan.add(new BoundaryEdge(u, w, nb, tc.getAttr()));
                     if (checkEncroach && encroached < 0 && segment && inDiametralDisk(u, w, p)) {
-                        Integer si = segIndexByEdge.get(k);
-                        if (si != null) {
-                            encroached = si;
-                        }
+                        encroached = segIndex;
                     }
                 }
             }
@@ -426,8 +426,7 @@ final class IncrementalCdt {
         for (int t : cavity) {
             freeSlot(t);
         }
-        Map<Integer, Integer> asU = new HashMap<>();
-        Map<Integer, Integer> asW = new HashMap<>();
+        ensureFanScratch(points.size());
         for (BoundaryEdge f : fan) {
             int u = f.u;
             int w = f.w;
@@ -435,7 +434,7 @@ final class IncrementalCdt {
             int id = allocSlot(new Triangle(u, w, pIdx, -1, -1, nb, f.attr));
             lastFan.add(id);
             long uw = key(u, w);
-            if (segSet.contains(uw)) {                      /* this fan tri now backs the segment */
+            if (segIndexByEdge.contains(uw)) {              /* this fan tri now backs the segment */
                 segTri.put(uw, id);
             }
             if (nb >= 0) {                                  /* repoint the outer ring */
@@ -447,18 +446,30 @@ final class IncrementalCdt {
                     }
                 }
             }
-            Integer mu = asW.get(u);
-            if (mu != null) {                               /* shares the (p,u) edge */
+            if (fanAsWGen[u] == gen) {                      /* shares the (p,u) edge */
+                int mu = fanAsW[u];
                 tris.get(id).setN1(mu);
                 tris.get(mu).setN0(id);
             }
-            asU.put(u, id);
-            Integer mw = asU.get(w);
-            if (mw != null) {                               /* shares the (w,p) edge */
+            fanAsU[u] = id;
+            fanAsUGen[u] = gen;
+            if (fanAsUGen[w] == gen) {                      /* shares the (w,p) edge */
+                int mw = fanAsU[w];
                 tris.get(id).setN0(mw);
                 tris.get(mw).setN1(id);
             }
-            asW.put(w, id);
+            fanAsW[w] = id;
+            fanAsWGen[w] = gen;
+        }
+    }
+
+    private void ensureFanScratch(int n) {
+        if (fanAsU.length < n) {
+            int cap = Math.max(n, fanAsU.length * 2);
+            fanAsU = Arrays.copyOf(fanAsU, cap);
+            fanAsUGen = Arrays.copyOf(fanAsUGen, cap);
+            fanAsW = Arrays.copyOf(fanAsW, cap);
+            fanAsWGen = Arrays.copyOf(fanAsWGen, cap);
         }
     }
 
@@ -510,8 +521,8 @@ final class IncrementalCdt {
         the maintained {@link #segTri} index plus one adjacency hop - O(1), not an
         O(T) mesh scan. Empty if {@code (a,b)} is not a current segment edge. */
     private int[] incidentTriangles(int a, int b) {
-        Integer t1 = segTri.get(key(a, b));
-        if (t1 == null) {
+        int t1 = segTri.get(key(a, b));
+        if (t1 < 0) {
             return new int[0];
         }
         Triangle tc = tris.get(t1);
@@ -529,8 +540,8 @@ final class IncrementalCdt {
      * second slot is then -1. Returns {-1, -1} if (a,b) is not a known segment.
      */
     int[] apexesOfSegment(int a, int b) {
-        Integer t1 = segTri.get(key(a, b));
-        if (t1 == null) {
+        int t1 = segTri.get(key(a, b));
+        if (t1 < 0) {
             return new int[]{-1, -1};
         }
         Triangle tc = tris.get(t1);
@@ -576,8 +587,8 @@ final class IncrementalCdt {
         for (int id : lastFan) {
             Triangle t = tris.get(id);
             for (int j = 0; j < 3; j++) {
-                Integer s = segIndexByEdge.get(key(t.corner(j), t.corner((j + 1) % 3)));
-                if (s != null) {
+                int s = segIndexByEdge.get(key(t.corner(j), t.corner((j + 1) % 3)));
+                if (s >= 0) {
                     encroachQueue.add(s);
                 }
             }

@@ -3,8 +3,6 @@ package com.acme.triangle.impl;
 import com.acme.triangle.Triangle;
 
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Shared mesh-topology helpers: the undirected edge key that matches two
@@ -50,16 +48,18 @@ final class Topology {
     static int[] neighbors(int count, Corner corner) {
         int[] neigh = new int[3 * count];
         Arrays.fill(neigh, -1);
-        Map<Long, EdgeSide> seen = new HashMap<>();
+        /* Edge -> the flat neigh slot (3*tri+corner) that first claimed it; the
+           primitive map keeps this build allocation-free per edge. */
+        LongIntMap seen = new LongIntMap(3 * count / 2 + 1);
         for (int i = 0; i < count; i++) {
             for (int j = 0; j < 3; j++) {
                 long k = edgeKey(corner.of(i, (j + 1) % 3), corner.of(i, (j + 2) % 3));
-                EdgeSide prev = seen.get(k);
-                if (prev == null) {
-                    seen.put(k, new EdgeSide(i, j));
+                int prev = seen.get(k);
+                if (prev < 0) {
+                    seen.put(k, 3 * i + j);
                 } else {
-                    neigh[3 * i + j] = prev.tri;
-                    neigh[3 * prev.tri + prev.corner] = i;
+                    neigh[3 * i + j] = prev / 3;
+                    neigh[prev] = i;
                 }
             }
         }
