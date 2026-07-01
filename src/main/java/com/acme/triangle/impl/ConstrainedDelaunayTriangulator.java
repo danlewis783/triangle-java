@@ -13,6 +13,7 @@ import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -102,14 +103,24 @@ public final class ConstrainedDelaunayTriangulator {
         List<Point> pts = new ArrayList<>(in.getPoints());
         List<Constraint> segs = new ArrayList<>(in.getSegments());
 
+        /* (a) Two segments cross: split both at their intersection point, and
+           rescan (rare; crossings only shrink). A crossing split cannot create a
+           new crossing - the halves are subsets of their parents - so this
+           terminates after the initial crossing count. The bounding-box test
+           rejects almost every pair before the exact-arithmetic cross() - on
+           polygonal boundaries only neighbouring chords overlap boxes, so the
+           O(S^2) scan is all cheap compares. */
         boolean changed = true;
         while (changed) {
             changed = false;
-
-            /* (a) Two segments cross: split both at their intersection point. */
+            double[] box = segmentBoxes(pts, segs);
             crossings:
             for (int i = 0; i < segs.size(); i++) {
                 for (int j = i + 1; j < segs.size(); j++) {
+                    if (box[4 * i] > box[4 * j + 1] || box[4 * j] > box[4 * i + 1]
+                            || box[4 * i + 2] > box[4 * j + 3] || box[4 * j + 2] > box[4 * i + 3]) {
+                        continue;                   /* disjoint boxes cannot cross */
+                    }
                     Constraint a = segs.get(i);
                     Constraint b = segs.get(j);
                     if (share(a, b)) {
@@ -129,25 +140,60 @@ public final class ConstrainedDelaunayTriangulator {
                     }
                 }
             }
-            if (changed) {
-                continue;
-            }
+        }
 
-            /* (b) A vertex lies exactly on a segment (a T-junction): split the
-               segment there. The whole segment cannot be recovered as one edge
-               with a vertex on it, so it must become a chain of subsegments. */
-            onEdge:
-            for (int i = 0; i < segs.size(); i++) {
-                Constraint s = segs.get(i);
-                for (int v = 0; v < pts.size(); v++) {
-                    if (v != s.getA() && v != s.getB() && onSegmentInterior(pts, s.getA(), s.getB(), v)) {
-                        segs.set(i, new Constraint(s.getA(), v, s.getMarker()));
-                        segs.add(new Constraint(v, s.getB(), s.getMarker()));
-                        changed = true;
-                        break onEdge;
+        /* (b) Vertices lying exactly on a segment (T-junctions): subdivide each
+           segment at every interior vertex in one pass, sorted along the
+           segment. The whole segment cannot be recovered as one edge with a
+           vertex on it, so it becomes a chain of subsegments. One pass suffices:
+           subdivision adds no vertices and no new crossings, so nothing here
+           creates new T-junction candidates. (The old form re-scanned all S
+           segments against all V vertices after every single split - quadratic
+           blow-up on lattice inputs whose boundary segments carry hundreds of
+           collinear vertices.) */
+        int origSegs = segs.size();
+        double[] box = segmentBoxes(pts, segs);
+        for (int i = 0; i < origSegs; i++) {
+            Constraint s = segs.get(i);
+            int a = s.getA();
+            int b = s.getB();
+            Point ptA = pts.get(a);
+            Point ptB = pts.get(b);
+            double abx = ptB.getX() - ptA.getX();
+            double aby = ptB.getY() - ptA.getY();
+            List<Integer> chain = null;
+            for (int v = 0; v < pts.size(); v++) {
+                Point pv = pts.get(v);
+                if (pv.getX() < box[4 * i] || pv.getX() > box[4 * i + 1]
+                        || pv.getY() < box[4 * i + 2] || pv.getY() > box[4 * i + 3]) {
+                    continue;                       /* outside the closed box: not on it */
+                }
+                if (v != a && v != b && onSegmentInterior(pts, a, b, v)) {
+                    if (chain == null) {
+                        chain = new ArrayList<>();
                     }
+                    chain.add(v);
                 }
             }
+            if (chain == null) {
+                continue;
+            }
+            /* Order by the projection along a->b (all collinear, so this is the
+               true order along the segment). */
+            chain.sort(Comparator.comparingDouble(v -> {
+                Point pv = pts.get(v);
+                return (pv.getX() - ptA.getX()) * abx + (pv.getY() - ptA.getY()) * aby;
+            }));
+            int prev = a;
+            for (int v : chain) {
+                if (prev == a) {
+                    segs.set(i, new Constraint(a, v, s.getMarker()));
+                } else {
+                    segs.add(new Constraint(prev, v, s.getMarker()));
+                }
+                prev = v;
+            }
+            segs.add(new Constraint(prev, b, s.getMarker()));
         }
 
         return new Pslg(pts, segs);
@@ -155,6 +201,20 @@ public final class ConstrainedDelaunayTriangulator {
 
     private static boolean share(Constraint a, Constraint b) {
         return a.getA() == b.getA() || a.getA() == b.getB() || a.getB() == b.getA() || a.getB() == b.getB();
+    }
+
+    /** Closed bounding boxes per segment: {minX, maxX, minY, maxY} at 4i. */
+    private static double[] segmentBoxes(List<Point> pts, List<Constraint> segs) {
+        double[] box = new double[4 * segs.size()];
+        for (int i = 0; i < segs.size(); i++) {
+            Point a = pts.get(segs.get(i).getA());
+            Point b = pts.get(segs.get(i).getB());
+            box[4 * i] = Math.min(a.getX(), b.getX());
+            box[4 * i + 1] = Math.max(a.getX(), b.getX());
+            box[4 * i + 2] = Math.min(a.getY(), b.getY());
+            box[4 * i + 3] = Math.max(a.getY(), b.getY());
+        }
+        return box;
     }
 
     /** True if vertex v is exactly collinear with (a,b) and strictly between them. */
