@@ -73,6 +73,44 @@ public final class BenchmarkInputs {
         return in;
     }
 
+    /**
+     * A {@code side x side} integer lattice of points (plus its four corner
+     * segments as the boundary), no refinement. Grid points make collinear and
+     * cocircular predicate ties the common case rather than the exception, so
+     * this is the construction-time stress case for the adaptive/exact predicate
+     * stages - the path random point clouds almost never take.
+     */
+    public static TriangleMesherInput grid(int side) {
+        int n = side * side;
+        double[] pts = new double[2 * n];
+        for (int i = 0; i < side; i++) {
+            for (int j = 0; j < side; j++) {
+                int p = i * side + j;
+                pts[2 * p] = j;
+                pts[2 * p + 1] = i;
+            }
+        }
+        int c00 = 0;
+        int c01 = side - 1;
+        int c10 = (side - 1) * side;
+        int c11 = side * side - 1;
+
+        TriangleMesherInput in = new TriangleMesherInput();
+        in.pointList = pts;
+        in.numberOfPoints = n;
+        in.segmentList = new int[]{c00, c01, c01, c11, c11, c10, c10, c00};
+        in.segmentMarkerList = new int[]{1, 1, 1, 1};
+        in.numberOfSegments = 4;
+        in.minAngleDegrees = 0;
+        in.quiet = true;
+        return in;
+    }
+
+    /** One captured benchmark input loaded from a JSON document. */
+    public static TriangleMesherInput fromJson(Path path) {
+        return TriangleJson.readInput(path);
+    }
+
     public static List<NamedInput> loadDirectory(Path dir) {
         try {
             List<NamedInput> inputs = new ArrayList<>();
