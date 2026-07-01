@@ -88,4 +88,62 @@ public final class TriangleMesherInput2 {
 
         return new TriangleMesherInput2(pointsList, segments.build(), holes.build(), regions.build(), in.minAngleDegrees, in.quiet);
     }
+
+    /**
+     * Marshal back to the flat public {@link TriangleMesherInput} - the inverse of
+     * {@link #from}. Lets a flat-native mesher (e.g. the JNA adapter) accept the
+     * modelled input by converting at its boundary. Empty lists marshal to the
+     * flat "none" convention: a zero count with a {@code null} array.
+     */
+    public TriangleMesherInput toFlat() {
+        TriangleMesherInput in = new TriangleMesherInput();
+        in.numberOfPoints = points.size();
+        in.pointList = PointUtils.flatten(points);
+
+        int s = segments.size();
+        in.numberOfSegments = s;
+        if (s > 0) {
+            int[] segList = new int[2 * s];
+            int[] segMarkers = new int[s];
+            for (int i = 0; i < s; i++) {
+                Constraint c = segments.get(i);
+                segList[2 * i] = c.getA();
+                segList[2 * i + 1] = c.getB();
+                segMarkers[i] = c.getMarker();
+            }
+            in.segmentList = segList;
+            in.segmentMarkerList = segMarkers;
+        }
+
+        int h = holes.size();
+        in.numberOfHoles = h;
+        if (h > 0) {
+            double[] holeList = new double[2 * h];
+            for (int i = 0; i < h; i++) {
+                Point p = holes.get(i);
+                holeList[2 * i] = p.getX();
+                holeList[2 * i + 1] = p.getY();
+            }
+            in.holeList = holeList;
+        }
+
+        int r = regions.size();
+        in.numberOfRegions = r;
+        if (r > 0) {
+            double[] regionList = new double[4 * r];
+            for (int i = 0; i < r; i++) {
+                Region region = regions.get(i);
+                Point site = region.getSite();
+                regionList[4 * i] = site.getX();
+                regionList[4 * i + 1] = site.getY();
+                regionList[4 * i + 2] = region.getAttribute();
+                regionList[4 * i + 3] = region.getMaxArea();
+            }
+            in.regionList = regionList;
+        }
+
+        in.minAngleDegrees = minAngleDegrees;
+        in.quiet = quiet;
+        return in;
+    }
 }

@@ -2,8 +2,11 @@ package com.acme.triangle.impl;
 
 import com.acme.triangle.MeshContractException;
 import com.acme.triangle.TriangleMesher;
+import com.acme.triangle.TriangleMesher2;
 import com.acme.triangle.TriangleMesherInput;
+import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
+import com.acme.triangle.TriangleMesherOutput2;
 import com.acme.triangle.contract.MeshValidator;
 import java.util.List;
 
@@ -13,7 +16,7 @@ import java.util.List;
  * a canary around an under-development implementation; wrapping a trusted
  * implementation is unnecessary.
  */
-public final class ValidatingTriangleMesher implements TriangleMesher {
+public final class ValidatingTriangleMesher implements TriangleMesher, TriangleMesher2 {
 
     private final TriangleMesher delegate;
 
@@ -30,5 +33,12 @@ public final class ValidatingTriangleMesher implements TriangleMesher {
                     violations);
         }
         return out;
+    }
+
+    /** Modelled entry point: convert to the flat form this decorator validates in,
+        then repack the result - the conversion lives on the DTOs. */
+    @Override
+    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
+        return TriangleMesherOutput2.from(mesh(input.toFlat()));
     }
 }

@@ -55,6 +55,44 @@ public final class TriangleMesherOutput2 {
         return hasAttributes;
     }
 
+    /**
+     * Repack a flat public {@link TriangleMesherOutput} into the modelled form -
+     * the inverse of {@link #toFlat}. Lets a flat-native mesher (e.g. the JNA
+     * adapter) return the modelled output by converting at its boundary. The
+     * {@code hasAttributes} flag is recovered from whether the flat output carries
+     * a {@code triangleAttributeList} at all, preserving the "no regions" vs
+     * "region attribute 0.0" distinction.
+     */
+    public static TriangleMesherOutput2 from(TriangleMesherOutput out) {
+        ImmutableList<Point> points = PointUtils.toImmutableList(out.numberOfPoints, out.pointList);
+
+        int[] tri = out.triangleList;
+        int[] neigh = out.neighborList;
+        double[] attrs = out.triangleAttributeList;
+        ImmutableList.Builder<ImmutableTriangle> triangles = ImmutableList.builder();
+        for (int i = 0; i < out.numberOfTriangles; i++) {
+            double attr = attrs != null ? attrs[i] : 0.0;
+            int n0 = neigh != null ? neigh[3 * i] : -1;
+            int n1 = neigh != null ? neigh[3 * i + 1] : -1;
+            int n2 = neigh != null ? neigh[3 * i + 2] : -1;
+            triangles.add(new DefaultImmutableTriangle(
+                    tri[3 * i], tri[3 * i + 1], tri[3 * i + 2], n0, n1, n2, attr));
+        }
+
+        ImmutableList.Builder<Constraint> segments = ImmutableList.builder();
+        int[] segList = out.segmentList;
+        int[] segMarkers = out.segmentMarkerList;
+        if (segList != null) {
+            for (int i = 0; i < out.numberOfSegments; i++) {
+                int marker = segMarkers != null ? segMarkers[i] : 0;
+                segments.add(new Constraint(segList[2 * i], segList[2 * i + 1], marker));
+            }
+        }
+
+        return new TriangleMesherOutput2(points, triangles.build(), segments.build(),
+                out.triangleAttributeList != null);
+    }
+
     /** Marshal back to the flat public {@link TriangleMesherOutput} at the API
      boundary - the inverse of repacking the input. */
     public TriangleMesherOutput toFlat() {

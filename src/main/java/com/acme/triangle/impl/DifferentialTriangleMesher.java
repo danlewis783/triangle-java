@@ -2,8 +2,11 @@ package com.acme.triangle.impl;
 
 import com.acme.triangle.DivergenceHandler;
 import com.acme.triangle.TriangleMesher;
+import com.acme.triangle.TriangleMesher2;
 import com.acme.triangle.TriangleMesherInput;
+import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
+import com.acme.triangle.TriangleMesherOutput2;
 import com.acme.triangle.contract.MeshValidator;
 import java.util.List;
 
@@ -18,7 +21,7 @@ import java.util.List;
  * be the wrong bar. The reference's violations are passed along for context
  * (normally empty for a trusted reference).
  */
-public final class DifferentialTriangleMesher implements TriangleMesher {
+public final class DifferentialTriangleMesher implements TriangleMesher, TriangleMesher2 {
 
     private final TriangleMesher primary;
     private final TriangleMesher reference;
@@ -42,5 +45,12 @@ public final class DifferentialTriangleMesher implements TriangleMesher {
             handler.onContractDivergence(input, primaryViolations, referenceViolations);
         }
         return primaryOut;
+    }
+
+    /** Modelled entry point: convert to the flat form this decorator compares in,
+        then repack the result - the conversion lives on the DTOs. */
+    @Override
+    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
+        return TriangleMesherOutput2.from(mesh(input.toFlat()));
     }
 }

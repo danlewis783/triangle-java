@@ -1,8 +1,11 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesher;
+import com.acme.triangle.TriangleMesher2;
 import com.acme.triangle.TriangleMesherInput;
+import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
+import com.acme.triangle.TriangleMesherOutput2;
 import com.acme.triangle.io.TriangleJson;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -17,7 +20,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * from `-Dtriangle.captureDir=...`; if absent, a directory under
  * `java.io.tmpdir` is used.
  */
-public final class CapturingTriangleMesher implements TriangleMesher {
+public final class CapturingTriangleMesher implements TriangleMesher, TriangleMesher2 {
 
     static final String CAPTURE_CASES_PROPERTY = "triangle.captureCases";
     static final String CAPTURE_DIR_PROPERTY = "triangle.captureDir";
@@ -42,6 +45,13 @@ public final class CapturingTriangleMesher implements TriangleMesher {
             captureInput(input);
         }
         return delegate.mesh(input);
+    }
+
+    /** Modelled entry point: convert to the flat form this decorator captures and
+        delegates in, then repack the result - the conversion lives on the DTOs. */
+    @Override
+    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
+        return TriangleMesherOutput2.from(mesh(input.toFlat()));
     }
 
     private void captureInput(TriangleMesherInput input) {
