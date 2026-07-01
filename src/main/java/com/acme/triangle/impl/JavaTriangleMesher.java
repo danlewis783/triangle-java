@@ -100,7 +100,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
            Steiner point or subsegment split updates the mesh locally instead of
            rebuilding it from scratch every iteration (the old ~O(N^3) cost). */
         IncrementalCdt mesh = new IncrementalCdt(
-                ConstrainedDelaunayTriangulator.triangulate(input));
+                ConstrainedDelaunayTriangulator.triangulate(input), bound);
 
         /* Worst-first bad-triangle queue, keyed by shortest-edge length (shortest
            = highest priority; by length, NOT angle - a worst-angle-first variant

@@ -91,7 +91,26 @@ final class IncrementalCdt {
     private int[] fanAsW = new int[0];
     private int[] fanAsWGen = new int[0];
 
+    /* Encroachment lens factor: subsegment (a,b) is encroached by p iff the
+       angle a-p-b is obtuse AND cos^2 of it is at least this - i.e. p lies in
+       the diametral *lens* determined by the angle bound (Triangle's default
+       test, triangle.c:3925: apex angle >= 180 - 2*minangle degrees). 0 is the
+       plain diametral circle (any obtuse apex angle); (2cos^2(minangle) - 1)^2
+       is Triangle's lens, which tolerates blunter apexes and so splits far
+       fewer subsegments near closely spaced boundaries. */
+    private final double lensFactor;
+
+    /** Diametral-circle encroachment (conservative; structural tests use this). */
     IncrementalCdt(TriangleMesherOutput2 base) {
+        this(base, 45.0);           /* cos^2(45) = 0.5 makes the lens the circle */
+    }
+
+    /** Encroachment via Triangle's diametral lens for the given quality bound
+        (the bound the refinement loop is meshing toward). */
+    IncrementalCdt(TriangleMesherOutput2 base, double minAngleDegrees) {
+        double g = Math.cos(Math.toRadians(minAngleDegrees));
+        g = g * g;
+        lensFactor = (2.0 * g - 1.0) * (2.0 * g - 1.0);
         /* Adopt the modelled stores the CDT just built and handed over (it is a
            transient, used by nobody else): the modelled point list seeds the
            mesh's growable vertex store, and the triangles already carry compacted
@@ -397,7 +416,17 @@ final class IncrementalCdt {
                 boolean boundary = nb < 0 || cavityGen[nb] != gen || segment;
                 if (boundary && k != skipEdgeKey) {
                     fan.add(new BoundaryEdge(u, w, nb, tc.getAttr()));
-                    if (checkEncroach && encroached < 0 && segment && inDiametralDisk(u, w, p)) {
+                    /* p encroaches the subsegment (diametral lens), or sits on
+                       or beyond it - outside the region the cavity re-fans, so
+                       inserting would fold the fan. The latter is Triangle's
+                       blocked-walk rejection (VIOLATINGVERTEX, triangle.c:8375):
+                       split the blocking subsegment instead, whatever the lens
+                       says. Non-segment boundary edges cannot be violated: the
+                       carved domain is segment-bounded, and across an interior
+                       edge the circumcircle containment propagates. */
+                    if (checkEncroach && encroached < 0 && segment
+                            && (inDiametralLens(u, w, p)
+                                || orientXY(u, w, p.getX(), p.getY()) <= 0)) {
                         encroached = segIndex;
                     }
                 }
@@ -573,7 +602,7 @@ final class IncrementalCdt {
             int s = encroachQueue.poll();
             Segment seg = segments.get(s);
             for (int apex : apexesOfSegment(seg.a, seg.b)) {
-                if (apex >= 0 && inDiametralDisk(seg.a, seg.b, apex)) {
+                if (apex >= 0 && inDiametralLens(seg.a, seg.b, apex)) {
                     return s;
                 }
             }
@@ -595,32 +624,27 @@ final class IncrementalCdt {
         }
     }
 
-    /** Whether vertex {@code p} lies in the diametral disk of subsegment
-        {@code (a,b)} - i.e. the angle a-p-b is obtuse, so {@code (a,b)} is
-        encroached by {@code p}. */
-    private boolean inDiametralDisk(int a, int b, int p) {
-        Point ptA = points.get(a);
-        Point ptB = points.get(b);
-        Point ptP = points.get(p);
-        double pax = ptA.getX();
-        double pay = ptA.getY();
-        double pbx = ptB.getX();
-        double pby = ptB.getY();
-        double px = ptP.getX();
-        double py = ptP.getY();
-        return (px - pax) * (px - pbx) + (py - pay) * (py - pby) < 0;
+    /** Whether vertex {@code p} encroaches subsegment {@code (a,b)}: p lies in
+        its diametral lens (see {@link #lensFactor}). */
+    private boolean inDiametralLens(int a, int b, int p) {
+        return inDiametralLens(a, b, points.get(p));
     }
 
-    /** Whether the loose point {@code p} (a candidate vertex) lies in the diametral
-        disk of subsegment {@code (a,b)} - so inserting it would encroach. */
-    private boolean inDiametralDisk(int a, int b, Point p) {
+    /** Whether the loose point {@code p} (a candidate vertex) lies in the
+        diametral lens of subsegment {@code (a,b)} - so inserting it would
+        encroach. */
+    private boolean inDiametralLens(int a, int b, Point p) {
         Point ptA = points.get(a);
         Point ptB = points.get(b);
-        double pax = ptA.getX();
-        double pay = ptA.getY();
-        double pbx = ptB.getX();
-        double pby = ptB.getY();
-        return (p.getX() - pax) * (p.getX() - pbx) + (p.getY() - pay) * (p.getY() - pby) < 0;
+        double dax = ptA.getX() - p.getX();
+        double day = ptA.getY() - p.getY();
+        double dbx = ptB.getX() - p.getX();
+        double dby = ptB.getY() - p.getY();
+        double dot = dax * dbx + day * dby;
+        if (dot >= 0.0) {
+            return false;                       /* apex angle not even obtuse */
+        }
+        return dot * dot >= lensFactor * (dax * dax + day * day) * (dbx * dbx + dby * dby);
     }
 
     TriangleMesherOutput2 toOutput() {
