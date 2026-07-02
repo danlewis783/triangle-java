@@ -246,67 +246,33 @@ public final class MesherBenchmark {
             throw new IllegalArgumentException("holeSides must be at least 3");
         }
 
-        int outerPoints = 4;
-        int totalPoints = outerPoints + holeSides;
-        double[] pts = new double[2 * totalPoints];
-
-        pts[0] = 0.0;
-        pts[1] = 0.0;
-        pts[2] = 2.0;
-        pts[3] = 0.0;
-        pts[4] = 2.0;
-        pts[5] = 1.0;
-        pts[6] = 0.0;
-        pts[7] = 1.0;
+        TriangleMesherInput.Builder b = TriangleMesherInput.builder();
+        int p0 = b.point(0, 0);
+        int p1 = b.point(2, 0);
+        int p2 = b.point(2, 1);
+        int p3 = b.point(0, 1);
+        b.segment(p0, p1, 1).segment(p1, p2, 1).segment(p2, p3, 1).segment(p3, p0, 1);
 
         double cx = 1.0;
         double cy = 0.5;
         double radius = 0.22;
+        int firstHolePoint = -1;
+        int prev = -1;
         for (int i = 0; i < holeSides; i++) {
             double angle = 2.0 * Math.PI * i / holeSides;
-            int p = outerPoints + i;
-            pts[2 * p] = cx + radius * Math.cos(angle);
-            pts[2 * p + 1] = cy + radius * Math.sin(angle);
+            int p = b.point(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle));
+            if (prev >= 0) {
+                b.segment(prev, p, 2);
+            } else {
+                firstHolePoint = p;
+            }
+            prev = p;
         }
+        b.segment(prev, firstHolePoint, 2);
 
-        int segments = 4 + holeSides;
-        int[] segs = new int[2 * segments];
-        int[] markers = new int[segments];
-
-        segs[0] = 0;
-        segs[1] = 1;
-        segs[2] = 1;
-        segs[3] = 2;
-        segs[4] = 2;
-        segs[5] = 3;
-        segs[6] = 3;
-        segs[7] = 0;
-        markers[0] = 1;
-        markers[1] = 1;
-        markers[2] = 1;
-        markers[3] = 1;
-
-        for (int i = 0; i < holeSides; i++) {
-            int s = 4 + i;
-            int a = outerPoints + i;
-            int b = outerPoints + ((i + 1) % holeSides);
-            segs[2 * s] = a;
-            segs[2 * s + 1] = b;
-            markers[s] = 2;
-        }
-
-        TriangleMesherInput in = new TriangleMesherInput();
-        in.pointList = pts;
-        in.numberOfPoints = totalPoints;
-        in.segmentList = segs;
-        in.segmentMarkerList = markers;
-        in.numberOfSegments = segments;
-        in.holeList = new double[]{cx, cy};
-        in.numberOfHoles = 1;
-        in.regionList = new double[]{1.65, 0.75, 1.0, maxArea};
-        in.numberOfRegions = 1;
-        in.minAngleDegrees = q;
-        in.quiet = true;
-        return in;
+        return b.hole(cx, cy)
+                .region(1.65, 0.75, 1.0, maxArea)
+                .minAngleDegrees(q)
+                .build();
     }
 }
