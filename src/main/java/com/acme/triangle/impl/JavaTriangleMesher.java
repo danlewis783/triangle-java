@@ -12,12 +12,11 @@ import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.TriangleMesherOutput2;
 
 import it.unimi.dsi.fastutil.ints.IntList;
+import org.jspecify.annotations.Nullable;
 
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
-import java.util.PriorityQueue;
 
 /**
  * Pure-Java {@link TriangleMesher}: constrained Delaunay
@@ -103,8 +102,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
            regressed area cases). Seed once over the whole mesh, then re-test only
            the triangles each mutation changed (the mesh's "last fan"). Entries can
            go stale - their slot freed or reused - so revalidate on dequeue. */
-        PriorityQueue<BadTri> bad =
-                new PriorityQueue<>(Comparator.comparingDouble(e -> e.key));
+        BadTriQueue bad = new BadTriQueue();
         List<Triangle> seed = mesh.trianglesView();
         for (int id = 0; id < seed.size(); id++) {
             if (seed.get(id) != null) {
@@ -215,10 +213,12 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
 
     /** A queued bad triangle: its slot id, its corners at enqueue time (to detect
         a stale entry once the slot is freed or reused), and its shortest-edge
-        squared length as the priority key. */
+        squared length as the priority key. Doubles as an intrusive
+        {@link BadTriQueue} node via {@code next}. */
     private static final class BadTri {
         final int id, a, b, c;
         final double key;
+        @Nullable BadTri next;
 
         BadTri(int id, int a, int b, int c, double key) {
             this.id = id;
@@ -229,9 +229,78 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         }
     }
 
+    /**
+     * Worst-first bad-triangle queue as 4096 FIFO bins keyed by the magnitude of
+     * the shortest-edge length - Triangle's scheme (triangle.c:3722), which
+     * out-performed its author's heap "by a larger margin than I'd suspected":
+     * enqueue and dequeue are O(1) where the binary heap's sift was ~20% of
+     * refinement time here. The price is ordering that is only
+     * &radic;2-granular (each exponent of the squared key is split once), i.e.
+     * exactly the worst-first-by-length processing the refinement needs, just
+     * FIFO among near-equal keys. Bins are intrusive singly-linked lists through
+     * {@link BadTri#next}; a linked chain of non-empty bins keeps "highest
+     * non-empty" O(1) amortized.
+     */
+    private static final class BadTriQueue {
+        private static final double SQRT2 = 1.4142135623730951;
+
+        private final BadTri[] front = new BadTri[4096];
+        private final BadTri[] tail = new BadTri[4096];
+        private final int[] nextNonEmpty = new int[4096];
+        private int firstNonEmpty = -1;
+
+        void add(BadTri t) {
+            int q = binOf(t.key);
+            if (front[q] == null) {                 /* newly non-empty bin: link it in */
+                if (q > firstNonEmpty) {
+                    nextNonEmpty[q] = firstNonEmpty;
+                    firstNonEmpty = q;
+                } else {
+                    int above = q + 1;              /* nearest non-empty higher-priority bin */
+                    while (front[above] == null) {
+                        above++;
+                    }
+                    nextNonEmpty[q] = nextNonEmpty[above];
+                    nextNonEmpty[above] = q;
+                }
+                front[q] = t;
+            } else {
+                tail[q].next = t;
+            }
+            tail[q] = t;
+            t.next = null;
+        }
+
+        @Nullable BadTri poll() {
+            if (firstNonEmpty < 0) {
+                return null;
+            }
+            BadTri t = front[firstNonEmpty];
+            front[firstNonEmpty] = t.next;
+            if (t.next == null) {
+                firstNonEmpty = nextNonEmpty[firstNonEmpty];
+            }
+            return t;
+        }
+
+        /** Bin for a squared-length key: shorter edges get higher bins (dequeued
+            first), two bins per power of two (Triangle's grading; a finer
+            4-per-octave variant was tried and moved sizes chaotically, not
+            better), clamped to the 4096 available. */
+        private static int binOf(double key) {
+            boolean shortEdge = key < 1.0;
+            double length = shortEdge ? 1.0 / key : key;
+            int exp = Math.getExponent(length);
+            int halfStep = Math.scalb(length, -exp) > SQRT2 ? 1 : 0;
+            int graded = 2 * exp + halfStep;
+            int q = shortEdge ? 2048 + graded : 2047 - graded;
+            return Math.max(0, Math.min(4095, q));
+        }
+    }
+
     /** Enqueue the triangle in slot {@code id} if it is currently bad. Reads the
         live mesh, so a dead slot is silently skipped. */
-    private static void enqueueIfBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
+    private static void enqueueIfBad(BadTriQueue bad, IncrementalCdt mesh,
                                      int id, double cosSqBound,
                                      AreaBounds areaBounds) {
         Triangle tc = mesh.trianglesView().get(id);
@@ -263,7 +332,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
 
     /** Re-test the triangles the most recent mutation created (the mesh's last
         fan), enqueuing any that are bad - the dirty set in place of a full rescan. */
-    private static void enqueueFan(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
+    private static void enqueueFan(BadTriQueue bad, IncrementalCdt mesh,
                                    double cosSqBound, AreaBounds areaBounds) {
         IntList fan = mesh.lastFanTriangles();
         for (int i = 0; i < fan.size(); i++) {
@@ -274,10 +343,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     /** Pop the highest-priority bad triangle still present in the mesh, discarding
         stale entries (slot freed, or reused for a different triangle). A surviving
         triangle's corners are unchanged, so it is still bad - no re-test needed. */
-    private static int dequeueValidBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh) {
+    private static int dequeueValidBad(BadTriQueue bad, IncrementalCdt mesh) {
         List<Triangle> tris = mesh.trianglesView();
-        while (!bad.isEmpty()) {
-            BadTri e = bad.poll();
+        for (BadTri e = bad.poll(); e != null; e = bad.poll()) {
             Triangle cur = tris.get(e.id);
             if (cur != null && sameCorners(cur, e.a, e.b, e.c)) {
                 return e.id;
