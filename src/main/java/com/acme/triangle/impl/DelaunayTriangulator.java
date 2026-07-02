@@ -57,7 +57,13 @@ public final class DelaunayTriangulator {
      */
     private static final class Builder {
 
-        private static final int HILBERT_BITS = 16;
+        /* Hilbert-curve grid resolution for the insertion order. 10 bits = a
+           2^10 x 2^10 grid (~1M cells): fine enough that consecutive insertions
+           stay local up to ~1M input points, and 6 fewer bit-twiddling rounds
+           per point than the original 16 (the ordering was ~12% of construction
+           in the JFR profile; 16 -> 10 bits is worth a few percent and anything
+           finer buys nothing at these sizes). */
+        private static final int HILBERT_BITS = 10;
 
         private double[] xy;                              /* interleaved coords: vertex i at (xy[2i], xy[2i+1]); input points + super-triangle */
         private int size;                                 /* live vertex count in xy */
