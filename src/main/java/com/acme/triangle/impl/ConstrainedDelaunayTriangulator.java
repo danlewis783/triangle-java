@@ -10,11 +10,12 @@ import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.TriangleMesherOutput2;
 import it.unimi.dsi.fastutil.Hash;
+import it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
@@ -572,17 +573,16 @@ public final class ConstrainedDelaunayTriangulator {
          * of the previous full rescan per flip.
          */
         void restoreDelaunay() {
-            /* A primitive int stack of edge slots (3*t+j): it starts with all 3T
+            /* A primitive stack of edge slots (3*t+j): it starts with all 3T
                edges and churns with every flip, so boxing here was measurable. */
-            int[] stack = new int[3 * nt + 16];
-            int top = 0;
-            for (int e = 0; e < 3 * nt; e++) {      /* pops 3*nt-1 first, like the old LIFO push */
-                stack[top++] = e;
+            IntArrayList stack = new IntArrayList(3 * nt + 16);
+            for (int e = 0; e < 3 * nt; e++) {      /* pops 3*nt-1 first (LIFO) */
+                stack.push(e);
             }
             int guard = 0;
             int cap = 200 * (nt + 1);
-            while (top > 0 && guard++ < cap) {
-                int e = stack[--top];
+            while (!stack.isEmpty() && guard++ < cap) {
+                int e = stack.popInt();
                 int t = e / 3;
                 int j = e % 3;
                 int nb = nbr[3 * t + j];
@@ -599,12 +599,9 @@ public final class ConstrainedDelaunayTriangulator {
                 if (Geometry.inCircle(pts, cor[3 * t], cor[3 * t + 1], cor[3 * t + 2], pts.get(q))
                         && convex(pts, u, v, p, q)) {
                     flip(t, nb, u, v, p, q);
-                    if (top + 6 > stack.length) {
-                        stack = Arrays.copyOf(stack, stack.length * 2);
-                    }
                     for (int k = 0; k < 3; k++) {
-                        stack[top++] = 3 * t + k;
-                        stack[top++] = 3 * nb + k;
+                        stack.push(3 * t + k);
+                        stack.push(3 * nb + k);
                     }
                 }
             }
@@ -618,14 +615,14 @@ public final class ConstrainedDelaunayTriangulator {
 
         boolean[] carve(List<Point> holes) {
             boolean[] removed = new boolean[nt];
-            ArrayDeque<Integer> queue = new ArrayDeque<>();
+            IntArrayFIFOQueue queue = new IntArrayFIFOQueue();
 
             /* Seed: triangles exposed to the outside across a non-segment hull edge. */
             for (int i = 0; i < nt; i++) {
                 for (int j = 0; j < 3; j++) {
                     if (nbr[3 * i + j] == -1 && !isSegmentEdge(i, j) && !removed[i]) {
                         removed[i] = true;
-                        queue.add(i);
+                        queue.enqueue(i);
                     }
                 }
             }
@@ -634,16 +631,16 @@ public final class ConstrainedDelaunayTriangulator {
                 int t = locate(h.getX(), h.getY());
                 if (t >= 0 && !removed[t]) {
                     removed[t] = true;
-                    queue.add(t);
+                    queue.enqueue(t);
                 }
             }
             while (!queue.isEmpty()) {
-                int t = queue.poll();
+                int t = queue.dequeueInt();
                 for (int j = 0; j < 3; j++) {
                     int nb = nbr[3 * t + j];
                     if (nb >= 0 && !removed[nb] && !isSegmentEdge(t, j)) {
                         removed[nb] = true;
-                        queue.add(nb);
+                        queue.enqueue(nb);
                     }
                 }
             }
@@ -660,18 +657,18 @@ public final class ConstrainedDelaunayTriangulator {
                 if (start < 0 || removed[start]) {
                     continue;
                 }
-                ArrayDeque<Integer> queue = new ArrayDeque<>();
+                IntArrayFIFOQueue queue = new IntArrayFIFOQueue();
                 boolean[] seen = new boolean[nt];
                 seen[start] = true;
-                queue.add(start);
+                queue.enqueue(start);
                 while (!queue.isEmpty()) {
-                    int t = queue.poll();
+                    int t = queue.dequeueInt();
                     attr[t] = region.getAttribute();
                     for (int j = 0; j < 3; j++) {
                         int nb = nbr[3 * t + j];
                         if (nb >= 0 && !removed[nb] && !seen[nb] && !isSegmentEdge(t, j)) {
                             seen[nb] = true;
-                            queue.add(nb);
+                            queue.enqueue(nb);
                         }
                     }
                 }

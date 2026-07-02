@@ -11,6 +11,8 @@ import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.TriangleMesherOutput2;
 
+import it.unimi.dsi.fastutil.ints.IntList;
+
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
@@ -263,8 +265,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         fan), enqueuing any that are bad - the dirty set in place of a full rescan. */
     private static void enqueueFan(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
                                    double cosSqBound, AreaBounds areaBounds) {
-        for (int id : mesh.lastFanTriangles()) {
-            enqueueIfBad(bad, mesh, id, cosSqBound, areaBounds);
+        IntList fan = mesh.lastFanTriangles();
+        for (int i = 0; i < fan.size(); i++) {
+            enqueueIfBad(bad, mesh, fan.getInt(i), cosSqBound, areaBounds);
         }
     }
 

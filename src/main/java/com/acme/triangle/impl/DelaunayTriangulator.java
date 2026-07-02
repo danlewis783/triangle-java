@@ -1,14 +1,13 @@
 package com.acme.triangle.impl;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Deque;
 import java.util.List;
 
 import com.acme.triangle.Point;
 import com.acme.triangle.Triangle;
 import com.acme.triangle.predicate.Predicates;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -69,10 +68,18 @@ public final class DelaunayTriangulator {
         private int size;                                 /* live vertex count in xy */
         private final int n;                              /* number of input points (before super-triangle) */
         private final List<@Nullable Triangle> tris = new ArrayList<>();
-        private final Deque<Integer> free = new ArrayDeque<>();
+        private final IntArrayList free = new IntArrayList();    /* dead slots, LIFO */
         private int[] cavityGen;                          /* gen-stamped cavity membership */
         private int gen;
         private int recent;                               /* a live triangle to start walks from */
+
+        /* Reusable per-insertion scratch, cleared each insert: the flood stack,
+           the collected cavity slots, and the cavity-boundary edges packed flat
+           as {u, w, outerNeighbour} triples (one int list instead of an int[3]
+           per edge - insertion runs once per input point). */
+        private final IntArrayList flood = new IntArrayList(64);
+        private final IntArrayList cavity = new IntArrayList(64);
+        private final IntArrayList fan = new IntArrayList(96);
 
         /* Generation-stamped fan-linking scratch (vertex -> the new fan triangle
            seeing it as u/w) - the vertex count is fixed at n+3, so these are
@@ -183,13 +190,12 @@ public final class DelaunayTriangulator {
             double px = x(p), py = y(p);
             int start = locate(px, py);
             gen++;
-            List<Integer> cavity = new ArrayList<>();
-            List<int[]> fan = new ArrayList<>();          /* boundary edges {u, w, outerNeighbour} */
-            Deque<Integer> stack = new ArrayDeque<>();
+            cavity.clear();
+            fan.clear();
             cavityGen[start] = gen;
-            stack.push(start);
-            while (!stack.isEmpty()) {
-                int t = stack.pop();
+            flood.push(start);
+            while (!flood.isEmpty()) {
+                int t = flood.popInt();
                 cavity.add(t);
                 Triangle tc = tris.get(t);
                 for (int j = 0; j < 3; j++) {
@@ -200,20 +206,22 @@ public final class DelaunayTriangulator {
                     }
                     if (nb >= 0 && inCircle(tris.get(nb), px, py)) {
                         cavityGen[nb] = gen;
-                        stack.push(nb);                   /* nb joins the cavity */
+                        flood.push(nb);                   /* nb joins the cavity */
                     } else {
-                        fan.add(new int[]{u, w, nb});     /* (u,w) is a cavity-boundary edge */
+                        fan.add(u);                       /* (u,w) is a cavity-boundary edge */
+                        fan.add(w);
+                        fan.add(nb);
                     }
                 }
             }
-            for (int t : cavity) {
-                freeSlot(t);
+            for (int i = 0; i < cavity.size(); i++) {
+                freeSlot(cavity.getInt(i));
             }
-            recent = refan(p, fan);
+            recent = refan(p);
         }
 
         /**
-         * Re-fan the cavity boundary {@code fan} around new vertex {@code p},
+         * Re-fan the cavity boundary ({@link #fan}) around new vertex {@code p},
          * relinking adjacency locally; returns one of the new triangle slots. Each
          * new triangle is {@code {u, w, p}} with {@code p} at corner 2, so the
          * boundary edge {@code (u,w)} is opposite corner 2 (slot 2 -&gt; the outer
@@ -221,10 +229,10 @@ public final class DelaunayTriangulator {
          * {@code (w,p)} at slot 0; adjacent fan triangles share a boundary vertex,
          * once as a {@code u} and once as a {@code w}, and are linked then.
          */
-        private int refan(int p, List<int[]> fan) {
+        private int refan(int p) {
             int last = -1;
-            for (int[] f : fan) {
-                int u = f[0], w = f[1], nb = f[2];
+            for (int i = 0; i < fan.size(); i += 3) {
+                int u = fan.getInt(i), w = fan.getInt(i + 1), nb = fan.getInt(i + 2);
                 int id = allocSlot(new Triangle(u, w, p, -1, -1, nb, 0.0));
                 last = id;
                 if (nb >= 0) {                            /* repoint the outer ring */
@@ -302,7 +310,7 @@ public final class DelaunayTriangulator {
         private int allocSlot(Triangle t) {
             int id;
             if (!free.isEmpty()) {
-                id = free.pop();
+                id = free.popInt();
                 tris.set(id, t);
             } else {
                 id = tris.size();

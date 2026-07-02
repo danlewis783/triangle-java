@@ -7,13 +7,14 @@ import com.acme.triangle.Triangle;
 import com.acme.triangle.TriangleMesherOutput2;
 import com.google.common.collect.ImmutableList;
 import it.unimi.dsi.fastutil.Hash;
+import it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import org.jspecify.annotations.Nullable;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Deque;
 import java.util.List;
 
 /**
@@ -76,15 +77,15 @@ final class IncrementalCdt {
        (its point is rejected if it would), so none is needed there. Candidates are
        validated on poll, so stale or now-clean entries are simply discarded - the
        O(S)-per-iteration full rescan becomes O(1) amortized. */
-    private final Deque<Integer> encroachQueue = new ArrayDeque<>();
+    private final IntArrayFIFOQueue encroachQueue = new IntArrayFIFOQueue();
 
-    /* Dead slots awaiting reuse, and the count of live triangles. */
-    private final Deque<Integer> freeSlots = new ArrayDeque<>();
+    /* Dead slots awaiting reuse (LIFO), and the count of live triangles. */
+    private final IntArrayList freeSlots = new IntArrayList();
     private int liveCount;
 
     /* The ids created by the most recent insertion/split (the new fan): the
        "dirty set" the refinement loop re-tests instead of rescanning the mesh. */
-    private final List<Integer> lastFan = new ArrayList<>();
+    private final IntArrayList lastFan = new IntArrayList();
 
     /* Generation-stamped cavity membership, so gathering a cavity is O(cavity)
        (never a full-size clear): a slot is in the current cavity iff its stamp
@@ -100,10 +101,13 @@ final class IncrementalCdt {
     private int[] fanAsW = new int[0];
     private int[] fanAsWGen = new int[0];
 
-    /* Reusable cavity-flood stack (triangle slot ids): the gather pushes every
-       cavity candidate through here, and a boxed ArrayDeque per insertion was
-       ~14% of area-constrained refinement in the JFR profile. */
-    private int[] floodStack = new int[64];
+    /* Reusable per-insertion scratch, cleared at each gather: the flood stack
+       the gather walks (a boxed ArrayDeque here was measurable in the JFR
+       profile), the cavity slots it collects, and the boundary fan the commit
+       consumes. */
+    private final IntArrayList flood = new IntArrayList(64);
+    private final IntArrayList cavityScratch = new IntArrayList();
+    private final List<BoundaryEdge> fanScratch = new ArrayList<>();
 
     /* Encroachment lens factor: subsegment (a,b) is encroached by p iff the
        angle a-p-b is obtuse AND cos^2 of it is at least this - i.e. p lies in
@@ -146,7 +150,7 @@ final class IncrementalCdt {
             int idx = segments.size();
             segments.add(new Segment(c.getA(), c.getB(), c.getMarker(), c.getA(), c.getB()));  /* original endpoints = a, b */
             segIndexByEdge.put(key(c.getA(), c.getB()), idx);
-            encroachQueue.add(idx);                  /* seed: every subsegment is a candidate */
+            encroachQueue.enqueue(idx);              /* seed: every subsegment is a candidate */
         }
         for (int i = 0; i < tris.size(); i++) {            /* seed segment->triangle */
             Triangle t = tris.get(i);
@@ -190,7 +194,7 @@ final class IncrementalCdt {
      * segment split - the dirty set to re-test, so the refinement loop need not
      * rescan the whole mesh. Valid until the next mutation.
      */
-    List<Integer> lastFanTriangles() {
+    IntList lastFanTriangles() {
         return lastFan;
     }
 
@@ -240,16 +244,14 @@ final class IncrementalCdt {
      *         subsegment {@code p} encroaches, for the caller to split instead
      */
     int insertInteriorOrEncroachedSegment(Point p, int seedTriangle) {
-        List<Integer> cavity = new ArrayList<>();
-        List<BoundaryEdge> fan = new ArrayList<>();
-        int encroached = gatherCavity(p, new int[]{seedTriangle}, -1L, cavity, fan, true);
+        int encroached = gatherCavity(p, new int[]{seedTriangle}, -1L, true);
         if (encroached >= 0) {
             return encroached;                  /* p encroaches a subsegment; do not insert */
         }
         points.add(p);
         int pIdx = points.size() - 1;
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
-        commitCavity(pIdx, cavity, fan);
+        commitCavity(pIdx);
         return -1;
     }
 
@@ -313,7 +315,8 @@ final class IncrementalCdt {
     /** Point {@link #segTri} for edge (a,b) at any live triangle in the last fan
         that carries it. */
     private void indexSegmentTriangle(int a, int b) {
-        for (int id : lastFan) {
+        for (int i = 0; i < lastFan.size(); i++) {
+            int id = lastFan.getInt(i);
             Triangle t = tris.get(id);
             boolean ha = t.getA() == a || t.getB() == a || t.getC() == a;
             boolean hb = t.getA() == b || t.getB() == b || t.getC() == b;
@@ -361,39 +364,39 @@ final class IncrementalCdt {
      * would form a degenerate triangle); pass {@code -1L} for none.
      */
     private void insertViaCavity(int pIdx, int[] seeds, long skipEdgeKey) {
-        List<Integer> cavity = new ArrayList<>();
-        List<BoundaryEdge> fan = new ArrayList<>();
-        gatherCavity(points.get(pIdx), seeds, skipEdgeKey, cavity, fan, false);
-        commitCavity(pIdx, cavity, fan);
+        gatherCavity(points.get(pIdx), seeds, skipEdgeKey, false);
+        commitCavity(pIdx);
     }
 
     /**
      * Gather the constrained Bowyer-Watson cavity for point {@code p} (raw coords,
      * not yet a vertex), seeded from {@code seeds}: walk the maintained neighbour
      * links collecting every triangle whose circumcircle contains {@code p} - never
-     * crossing a current segment. The cavity slots are appended to {@code cavity}
-     * and its boundary edges (outer neighbour + region attribute) to {@code fan},
-     * skipping {@code skipEdgeKey}. Read-only: no slot is freed, so an encroachment
-     * result can abort the insertion with nothing to roll back.
+     * crossing a current segment. The cavity slots are collected into
+     * {@link #cavityScratch} and its boundary edges (outer neighbour + region
+     * attribute) into {@link #fanScratch}, skipping {@code skipEdgeKey}.
+     * Read-only: no slot is freed, so an encroachment result can abort the
+     * insertion with nothing to roll back.
      *
      * @return when {@code checkEncroach}, the index of a boundary subsegment whose
-     *         diametral disk contains {@code p} (so {@code p} encroaches it), or
+     *         diametral lens contains {@code p} (so {@code p} encroaches it), or
      *         {@code -1} for none; always {@code -1} when not checking
      */
     private int gatherCavity(Point p, int[] seeds, long skipEdgeKey,
-                             List<Integer> cavity, List<BoundaryEdge> fan,
                              boolean checkEncroach) {
         gen++;
-        int[] stack = floodStack;
-        int top = 0;
+        IntArrayList cavity = cavityScratch;
+        List<BoundaryEdge> fan = fanScratch;
+        cavity.clear();
+        fan.clear();
         for (int s : seeds) {
             if (cavityGen[s] != gen) {
                 cavityGen[s] = gen;
-                stack[top++] = s;
+                flood.push(s);
             }
         }
-        while (top > 0) {
-            int t = stack[--top];
+        while (!flood.isEmpty()) {
+            int t = flood.popInt();
             cavity.add(t);
             Triangle tc = tris.get(t);
             for (int j = 0; j < 3; j++) {
@@ -408,10 +411,7 @@ final class IncrementalCdt {
                 }
                 if (inCircle(tris.get(nb), p)) {
                     cavityGen[nb] = gen;
-                    if (top == stack.length) {
-                        floodStack = stack = Arrays.copyOf(stack, top * 2);
-                    }
-                    stack[top++] = nb;
+                    flood.push(nb);
                 }
             }
         }
@@ -422,8 +422,8 @@ final class IncrementalCdt {
            candidate point can only encroach a boundary subsegment, so test those
            here as they are found. */
         int encroached = -1;
-        for (int t : cavity) {
-            Triangle tc = tris.get(t);
+        for (int i = 0; i < cavity.size(); i++) {
+            Triangle tc = tris.get(cavity.getInt(i));
             for (int j = 0; j < 3; j++) {
                 int nb = tc.neighbor(j);
                 int u = tc.corner((j + 1) % 3);
@@ -454,11 +454,11 @@ final class IncrementalCdt {
     }
 
     /**
-     * Re-fan the gathered {@code cavity} around the freshly added vertex {@code
-     * pIdx}: free the cavity slots and relink adjacency locally, recording the new
-     * triangles in {@link #lastFan}. Each new triangle inherits its source cavity
-     * triangle's region attribute, so a cavity that spans two regions attributes
-     * correctly.
+     * Re-fan the gathered cavity ({@link #cavityScratch}/{@link #fanScratch})
+     * around the freshly added vertex {@code pIdx}: free the cavity slots and
+     * relink adjacency locally, recording the new triangles in {@link #lastFan}.
+     * Each new triangle inherits its source cavity triangle's region attribute,
+     * so a cavity that spans two regions attributes correctly.
      * <p>
      * The fan is built as {@code {u, w, p}} with {@code p} always at corner 2: the
      * boundary edge {@code (u,w)} is then opposite corner 2 (slot 2 -&gt; the
@@ -468,13 +468,14 @@ final class IncrementalCdt {
      * once as a {@code w} (slot-0 edge) - and the outer-ring neighbour's link back
      * into the cavity is repointed to the new triangle.
      */
-    private void commitCavity(int pIdx, List<Integer> cavity, List<BoundaryEdge> fan) {
+    private void commitCavity(int pIdx) {
         lastFan.clear();
-        for (int t : cavity) {
-            freeSlot(t);
+        IntArrayList cavity = cavityScratch;
+        for (int i = 0; i < cavity.size(); i++) {
+            freeSlot(cavity.getInt(i));
         }
         ensureFanScratch(points.size());
-        for (BoundaryEdge f : fan) {
+        for (BoundaryEdge f : fanScratch) {
             int u = f.u;
             int w = f.w;
             int nb = f.nb;
@@ -541,7 +542,7 @@ final class IncrementalCdt {
     private int allocSlot(Triangle t) {
         int id;
         if (!freeSlots.isEmpty()) {
-            id = freeSlots.pop();
+            id = freeSlots.popInt();
             tris.set(id, t);
         } else {
             id = tris.size();
@@ -617,7 +618,7 @@ final class IncrementalCdt {
      */
     int pollEncroachedSubsegment() {
         while (!encroachQueue.isEmpty()) {
-            int s = encroachQueue.poll();
+            int s = encroachQueue.dequeueInt();
             Segment seg = segments.get(s);
             for (int apex : apexesOfSegment(seg.a, seg.b)) {
                 if (apex >= 0 && inDiametralLens(seg.a, seg.b, apex)) {
@@ -631,12 +632,12 @@ final class IncrementalCdt {
     /** Re-queue every subsegment among the most recent fan as an encroachment
         candidate - the only subsegments whose incident apex the mutation changed. */
     private void enqueueEncroachFan() {
-        for (int id : lastFan) {
-            Triangle t = tris.get(id);
+        for (int i = 0; i < lastFan.size(); i++) {
+            Triangle t = tris.get(lastFan.getInt(i));
             for (int j = 0; j < 3; j++) {
                 int s = segIndexByEdge.get(key(t.corner(j), t.corner((j + 1) % 3)));
                 if (s >= 0) {
-                    encroachQueue.add(s);
+                    encroachQueue.enqueue(s);
                 }
             }
         }
