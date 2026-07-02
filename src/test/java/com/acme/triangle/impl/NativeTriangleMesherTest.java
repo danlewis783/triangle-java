@@ -3,12 +3,21 @@ package com.acme.triangle.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
+import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.contract.MeshValidator;
 import com.acme.triangle.contract.ScenarioFixtures;
 import com.acme.triangle.contract.ScenarioFixtures.Scenario;
+import com.acme.triangle.io.TriangleJson;
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 
@@ -36,6 +45,31 @@ class NativeTriangleMesherTest {
                         .isEmpty();
             }));
         }
+        return tests;
+    }
+
+    @TestFactory
+    List<DynamicTest> capturedRegressionFixturesProduceContractValidMeshes()
+            throws URISyntaxException, IOException {
+        /* The same captured-consumer fixtures the Java mesher is pinned on
+           (JavaTriangleMesherTest): the fixtures' README treats native as the
+           trusted baseline, so record that claim as a test. */
+        NativeTriangleMesher mesher = new NativeTriangleMesher();
+        URL dir = getClass().getResource("/regression");
+        assertThat(dir).as("regression fixture directory on the test classpath").isNotNull();
+        List<DynamicTest> tests = new ArrayList<>();
+        try (Stream<Path> files = Files.list(Paths.get(dir.toURI()))) {
+            files.filter(p -> p.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .forEach(p -> tests.add(dynamicTest(p.getFileName().toString(), () -> {
+                        TriangleMesherInput in = TriangleJson.readInput(p);
+                        TriangleMesherOutput o = mesher.mesh(in);
+                        assertThat(MeshValidator.validate(o, in))
+                                .as("contract violations for %s", p.getFileName())
+                                .isEmpty();
+                    })));
+        }
+        assertThat(tests).as("regression fixtures found").isNotEmpty();
         return tests;
     }
 }

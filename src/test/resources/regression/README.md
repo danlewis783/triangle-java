@@ -69,3 +69,39 @@ These fixtures represent several kinds of regressions:
 
 They should be preserved as stable repro cases whenever the mesher,
 segment-output semantics, or downstream integration behaviour changes.
+
+## Findings (2026-07-01)
+
+Every fixture here is now meshed and contract-validated on every test run, by
+both meshers (`JavaTriangleMesherTest` /
+`NativeTriangleMesherTest.capturedRegressionFixturesProduceContractValidMeshes`).
+What the investigation found:
+
+- **The two "contract divergences" were a validator gap, not a Java-mesher
+  bug.** On `nested-c-sections-...` and `rect-section-2-offset-...`, the
+  *native* mesher failed `MeshValidator` identically - near-identical
+  below-bound angle lists, because both meshers apply the Miller-Pav-Walkington
+  rule (triangle.c:4084): triangles wedged on a concentric shell across two
+  input segments meeting at a small angle (here, the radiused two-material
+  transitions) are deliberately left unsplit - no Delaunay refinement can fix
+  an angle the input geometry imposes. `MeshValidator.checkQuality` now
+  recognizes exactly that wedge (`wedgedAtAJoin`), and both meshers pass.
+
+- **`eba-ex-problem-0-001-radii`'s downstream failure is an input
+  segment-graph property.** Vertices 0 (1.0, 2.0) and 1 (-1.1e-16, 2.0) have
+  *three* incident input segments each: the two-region interface (marker 2)
+  meets the y=2 outer line there, and the marker-1 outer chain is
+  discontinuous at vertex 0 (its continuations carry marker 2). An OML walk
+  that follows marker-1 edges dead-ends at exactly that node - with either
+  mesher, since both preserve input markers on output subsegments. The fix
+  belongs in the input generation (marker assignment at the region junctions)
+  or in the walker (handle junction nodes). Note also vertex 1's x of
+  -1.110223e-16, an upstream artifact that likely wants flushing to 0.
+
+- **The `rectangle-frame-*` value differences are expected mesh
+  non-determinism.** Both meshers produce contract-valid meshes for all four;
+  the meshes are different (java-vs-native triangulations differ legitimately,
+  and shifted again when the Java mesher adopted Triangle's diametral-lens
+  encroachment), so downstream computed values differ. If the consumer needs
+  agreement, it needs mesh-independent tolerances rather than identical
+  triangulations.

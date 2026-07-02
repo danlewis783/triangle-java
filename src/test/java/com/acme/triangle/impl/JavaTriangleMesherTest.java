@@ -11,11 +11,15 @@ import com.acme.triangle.contract.MeshValidator;
 import com.acme.triangle.contract.ScenarioFixtures;
 import com.acme.triangle.contract.ScenarioFixtures.Scenario;
 import com.acme.triangle.io.TriangleJson;
+import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.DynamicTest;
@@ -144,6 +148,32 @@ class JavaTriangleMesherTest {
         assertThat(MeshValidator.validate(o, in))
                 .as("faceted-hole q=33 violations")
                 .isEmpty();
+    }
+
+    @TestFactory
+    List<DynamicTest> capturedRegressionFixturesProduceContractValidMeshes()
+            throws URISyntaxException, IOException {
+        /* Every captured consumer input under /regression must mesh to a fully
+           contract-valid result - see the fixtures' README for what each one
+           regressed. In particular the two documented Java-mesher contract
+           divergences (nested-c-sections-with-radii-2-materials and
+           rect-section-2-offset-triangles-2-materials) are pinned here. */
+        URL dir = getClass().getResource("/regression");
+        assertThat(dir).as("regression fixture directory on the test classpath").isNotNull();
+        List<DynamicTest> tests = new ArrayList<>();
+        try (Stream<Path> files = Files.list(Paths.get(dir.toURI()))) {
+            files.filter(p -> p.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .forEach(p -> tests.add(dynamicTest(p.getFileName().toString(), () -> {
+                        TriangleMesherInput in = TriangleJson.readInput(p);
+                        TriangleMesherOutput o = mesher.mesh(in);
+                        assertThat(MeshValidator.validate(o, in))
+                                .as("contract violations for %s", p.getFileName())
+                                .isEmpty();
+                    })));
+        }
+        assertThat(tests).as("regression fixtures found").isNotEmpty();
+        return tests;
     }
 
     @Test

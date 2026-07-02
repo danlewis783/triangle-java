@@ -27,7 +27,11 @@ import java.util.Set;
  *   <li>segment recovery - every output segment is a real mesh edge;</li>
  *   <li>holes &amp; regions - no triangle covers an input hole point, and the
  *       region attribute is constant across every non-segment interior edge;</li>
- *   <li>quality - minimum triangle angle &ge; the requested bound.</li>
+ *   <li>quality - minimum triangle angle &ge; the requested bound, except
+ *       triangles wedged on a concentric shell across a join of two input
+ *       segments (the Miller-Pav-Walkington rule): an input angle smaller than
+ *       the bound cannot be refined away, and both meshers deliberately leave
+ *       exactly those triangles.</li>
  * </ol>
  * <p>
  * Geometry uses the robust {@link Predicates}, so the checks themselves are
@@ -301,10 +305,100 @@ public final class MeshValidator {
             int a = corner(o, i, 0), b = corner(o, i, 1), c = corner(o, i, 2);
             double minAngle = minAngleDeg(x(o, a), y(o, a), x(o, b), y(o, b),
                     x(o, c), y(o, c));
-            if (minAngle < bound - ANGLE_TOLERANCE_DEG) {
+            if (minAngle < bound - ANGLE_TOLERANCE_DEG && !wedgedAtAJoin(o, in, i)) {
                 v.add("quality: tri " + i + " min angle " + minAngle + " < " + bound);
             }
         }
+    }
+
+    /**
+     * The Miller-Pav-Walkington exemption to the quality bound (triangle.c:4084;
+     * {@code JavaTriangleMesher.unsplittable}): a below-bound triangle is
+     * acceptable when its shortest edge spans two <em>distinct</em> input
+     * segments meeting at a join vertex, with both endpoints in the segments'
+     * interiors equidistant from the join (a concentric shell around the join).
+     * Such a triangle is wedged in an input angle that no amount of Delaunay
+     * refinement can improve, and both the native and the Java mesher
+     * deliberately leave exactly these triangles unsplit - so the quality
+     * invariant must recognize them or no mesher can pass on inputs with small
+     * angles between segments (e.g. radiused multi-material sections).
+     * Determined geometrically - segment membership by collinearity, as in the
+     * segment-coverage check - since the validator has no vertex provenance.
+     */
+    private static boolean wedgedAtAJoin(TriangleMesherOutput o, TriangleMesherInput in,
+                                         int tri) {
+        int[] segs = in.segmentList;
+        if (segs == null || in.numberOfSegments < 2) {
+            return false;
+        }
+        int a = corner(o, tri, 0), b = corner(o, tri, 1), c = corner(o, tri, 2);
+        int p, q;                                       /* shortest-edge endpoints */
+        double ab = dist2(o, a, b), bc = dist2(o, b, c), ca = dist2(o, c, a);
+        if (ab <= bc && ab <= ca) {
+            p = a;
+            q = b;
+        } else if (bc <= ab && bc <= ca) {
+            p = b;
+            q = c;
+        } else {
+            p = c;
+            q = a;
+        }
+        for (int s1 = 0; s1 < in.numberOfSegments; s1++) {
+            if (!strictlyOnSegment(o, segs, s1, p)) {
+                continue;
+            }
+            for (int s2 = 0; s2 < in.numberOfSegments; s2++) {
+                if (s2 == s1 || !strictlyOnSegment(o, segs, s2, q)) {
+                    continue;
+                }
+                int join = sharedEndpoint(segs, s1, s2);
+                if (join < 0) {
+                    continue;
+                }
+                double d1 = dist2(o, p, join), d2 = dist2(o, q, join);
+                if (d1 < 1.001 * d2 && d1 > 0.999 * d2) {   /* a common shell */
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Whether output vertex {@code pt} lies strictly inside input segment
+        {@code s} of {@code segs} (collinear, away from both endpoints). */
+    private static boolean strictlyOnSegment(TriangleMesherOutput o,
+                                             int[] segs, int s, int pt) {
+        int a = segs[2 * s], b = segs[2 * s + 1];
+        if (outOfRange(a, o.numberOfPoints) || outOfRange(b, o.numberOfPoints)) {
+            return false;
+        }
+        double ax = x(o, a), ay = y(o, a);
+        double dx = x(o, b) - ax, dy = y(o, b) - ay;
+        double len2 = dx * dx + dy * dy;
+        if (len2 <= 0) {
+            return false;
+        }
+        double t = onLine(ax, ay, dx, dy, len2, x(o, pt), y(o, pt));
+        return !Double.isNaN(t) && t > ON_SEGMENT_REL_TOL && t < 1 - ON_SEGMENT_REL_TOL;
+    }
+
+    /** The vertex index the two input segments share, or -1. */
+    private static int sharedEndpoint(int[] segs, int s1, int s2) {
+        int a1 = segs[2 * s1], b1 = segs[2 * s1 + 1];
+        int a2 = segs[2 * s2], b2 = segs[2 * s2 + 1];
+        if (a1 == a2 || a1 == b2) {
+            return a1;
+        }
+        if (b1 == a2 || b1 == b2) {
+            return b1;
+        }
+        return -1;
+    }
+
+    private static double dist2(TriangleMesherOutput o, int u, int v) {
+        double dx = x(o, u) - x(o, v), dy = y(o, u) - y(o, v);
+        return dx * dx + dy * dy;
     }
 
     /* --- 8. segment coverage ----------------------------------------------- */
