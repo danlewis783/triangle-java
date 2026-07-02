@@ -31,8 +31,8 @@ import org.openjdk.jmh.annotations.Warmup;
  *       refinement) at growing random-point counts;</li>
  *   <li>{@code cdt-grid-50k}: construction over an integer lattice, where
  *       collinear/cocircular predicate ties are the common case - the stress
- *       test for the adaptive/exact predicate stages that random clouds almost
- *       never reach;</li>
+ *       test for the exact-fallback predicate path and the T-junction
+ *       normalization, which random clouds almost never reach;</li>
  *   <li>{@code qual-*}: the Ruppert refinement kernel at growing triangle counts
  *       (smaller max-area =&gt; more Steiner points). This path runs the hot
  *       coordinate-access loop the most, so it is where a vertex-store

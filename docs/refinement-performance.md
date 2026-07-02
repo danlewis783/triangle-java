@@ -326,21 +326,30 @@ JMH stack profiles (`-prof stack`) pinned the flat 3×:
   primitive open-addressed `LongIntMap`, generation-stamped int-array fan
   scratch, and int-array stacks. Construction 3.3×→2.2×, refinement kernel
   2.5×→1.3×.
-- **Per-call expansion buffers in the adaptive incircle** — a per-thread
-  scratch (C keeps these on the stack) took the cocircular-ring cases another
-  ~35% down.
 
 ### 7.3 C techniques that were genuinely missing (ported)
 
-- **Adaptive predicate stages** (`counterclockwiseadapt`/`incircleadapt`).
-  The A-filter previously fell straight to `BigDecimal`. Now: orient2d runs
-  B/C/D in expansions (D exact); incircle runs B/C and finishes, when B/C
-  cannot separate (only near-exactly-cocircular inputs), with an exact
-  expansion evaluation of the same determinant. No arbitrary precision remains.
-  Validated by the predicates oracle plus a 2M-case differential fuzz against
-  an independent BigDecimal reference (zero disagreements) — signs are
-  identical by construction, so mesh outputs were byte-identical, a built-in
-  correctness check (§4).
+- **Adaptive predicate stages — ported, A/B-measured, then REMOVED.** C
+  escalates a failed filter through expansion-arithmetic stages
+  (`counterclockwiseadapt`/`incircleadapt`, triangle.c:2788/:2929); we fall
+  straight to exact `BigDecimal`. The full port went in (commits `e437f97`,
+  `8b538c3`: orient2d B/C/D, incircle B/C plus an exact expansion tail — no
+  arbitrary precision anywhere, validated by the oracle and a 2M-case
+  differential fuzz), and a clean A/B with everything else held fixed then
+  showed its end-to-end value did not carry its ~450 lines of the hardest code
+  in the repo: identical on random-point construction and refinement,
+  −7% on `ref-circle-q33`, a wash on `ref-rings-q33`, and 2× only on the
+  exactly-degenerate lattice (`cdt-grid-50k` 142 ms vs 284 ms ± 306 — the
+  BigDecimal path also brings GC jitter). Per call, adaptive is 5–48× faster
+  *where it fires* (near-collinear orient2d ~50 ns vs ~2.4 µs; near-cocircular
+  incircle ~1.4 µs vs ~7 µs) — but the A filter already decides the
+  overwhelming majority of calls even on the "degenerate" regression inputs,
+  because computed geometry is degenerate only to ~1 ulp, which still clears
+  the filter. Both versions produce byte-identical meshes (exact signs either
+  way), so this was a pure perf/complexity trade and simplicity won.
+  **Re-port it from git history only if exactly-structured inputs (integer
+  lattices, snapped coordinates, duplicated points) become a real, measured
+  workload.**
 - **Diametral-lens encroachment** (triangle.c:3925). C's default encroachment
   region is the lens (apex angle ≥ 180° − 2·minangle), not the diametral
   circle; the circle split ~50% more subsegments than native on thin-feature
@@ -361,10 +370,13 @@ JMH stack profiles (`-prof stack`) pinned the flat 3×:
 ### 7.4 Where it stands
 
 JMH (Java 8, single fork), after all of the above: construction ~2.2×
-native, refinement kernel ~1.3–1.5×, captured q=33 hole case ~1.8×, cocircular
-256-gon ~4×, thin annulus ~3.3×. The remaining premium on the cocircular
-family is adaptive-incircle inner-loop cost (expansion arithmetic per cavity
-test — C pays it too, with smaller constants) plus the `PriorityQueue`; those
-are the next levers, measurement first. The JMH sweep now covers the regimes
-that used to be invisible: `cdt-grid-50k` (degenerate predicates in
-construction) and `ref-hole/circle/rings-q33` (captured refinement cases).
+native, refinement kernel ~1.3–1.5×, captured q=33 hole case ~1.9×, cocircular
+256-gon ~4.5×, thin annulus ~3.3×, exact lattice ~6× (the one place the
+removed predicate port mattered; see §7.3). The remaining premium on the
+cocircular family is filter-failing predicate calls (each a `BigDecimal`
+evaluation) plus the `PriorityQueue` (~10%); those are the next levers,
+measurement first — and the predicate lever's exact cost/benefit is already
+measured in §7.3. The JMH sweep now covers the regimes that used to be
+invisible: `cdt-grid-50k` (exactly-degenerate predicates and T-junction
+normalization in construction) and `ref-hole/circle/rings-q33` (captured
+refinement cases).

@@ -77,8 +77,9 @@ public final class BenchmarkInputs {
      * A {@code side x side} integer lattice of points (plus its four corner
      * segments as the boundary), no refinement. Grid points make collinear and
      * cocircular predicate ties the common case rather than the exception, so
-     * this is the construction-time stress case for the adaptive/exact predicate
-     * stages - the path random point clouds almost never take.
+     * this is the construction-time stress case for the exact predicate
+     * fallback and the T-junction normalization - paths random point clouds
+     * almost never take.
      */
     public static TriangleMesherInput grid(int side) {
         int n = side * side;
