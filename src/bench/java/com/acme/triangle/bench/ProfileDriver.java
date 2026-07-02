@@ -1,13 +1,12 @@
 package com.acme.triangle.bench;
 
-import com.acme.triangle.TriangleMesher2;
+import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
-import com.acme.triangle.TriangleMesherInput2;
-import com.acme.triangle.TriangleMeshers2;
+import com.acme.triangle.TriangleMeshers;
 import java.nio.file.Paths;
 
 /**
- * Profiling workload: loops the pure-Java {@link TriangleMesher2} over one
+ * Profiling workload: loops the pure-Java {@link TriangleMesher} over one
  * scenario so a profiler (JFR via the {@code profile} Gradle task, or any
  * attached sampler) sees nothing but the Java mesher - no native runs, no
  * harness noise. Scenario names match {@link MesherJmh}'s.
@@ -25,8 +24,8 @@ public final class ProfileDriver {
         String scenario = args.length > 0 ? args[0] : "ref-rings-q33";
         long seconds = args.length > 1 ? Long.parseLong(args[1]) : 30;
 
-        TriangleMesher2 mesher = TriangleMeshers2.javaMesher();
-        TriangleMesherInput2 input = TriangleMesherInput2.from(build(scenario));
+        TriangleMesher mesher = TriangleMeshers.javaMesher();
+        TriangleMesherInput input = build(scenario);
 
         long warmupEnd = System.nanoTime() + 5_000_000_000L;   /* 5 s JIT warmup */
         int meshes = 0;
@@ -41,7 +40,7 @@ public final class ProfileDriver {
         meshes = 0;
         int triangles = 0;
         while (System.nanoTime() < end) {
-            triangles = mesher.mesh(input).getTriangles().size();
+            triangles = mesher.mesh(input).numberOfTriangles;
             meshes++;
         }
         System.out.println("profiled: " + meshes + " meshes, " + triangles + " triangles each");

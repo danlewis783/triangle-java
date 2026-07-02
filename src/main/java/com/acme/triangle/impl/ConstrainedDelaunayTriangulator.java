@@ -6,9 +6,7 @@ import com.acme.triangle.ImmutableTriangle;
 import com.acme.triangle.Point;
 import com.acme.triangle.Region;
 import com.acme.triangle.TriangleMesherInput;
-import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
-import com.acme.triangle.TriangleMesherOutput2;
 import it.unimi.dsi.fastutil.Hash;
 import it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -46,10 +44,10 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     public static TriangleMesherOutput triangulate(TriangleMesherInput in) {
-        return triangulate(TriangleMesherInput2.from(in)).toFlat();
+        return triangulate(ModelledInput.from(in)).toFlat();
     }
 
-    static TriangleMesherOutput2 triangulate(TriangleMesherInput2 in) {
+    static ModelledOutput triangulate(ModelledInput in) {
         /* 1. Split crossing segments. */
         Pslg pslg = splitIntersections(in);
         FlatPointList pts = pslg.points;
@@ -92,7 +90,7 @@ public final class ConstrainedDelaunayTriangulator {
         }
     }
 
-    private static Pslg splitIntersections(TriangleMesherInput2 in) {
+    private static Pslg splitIntersections(ModelledInput in) {
         /* Growable working copy: intersection points are appended as crossings
            are resolved (the input store must not be mutated). */
         FlatPointList pts = FlatPointList.copyOf(in.getPoints());
@@ -672,7 +670,7 @@ public final class ConstrainedDelaunayTriangulator {
 
         /* --- output ---------------------------------------------------------- */
 
-        TriangleMesherOutput2 buildOutput(boolean[] removed, double @Nullable [] attr, Pslg pslg) {
+        ModelledOutput buildOutput(boolean[] removed, double @Nullable [] attr, Pslg pslg) {
             /* One cell per slot, null where carved away, each carrying its neighbour
                ids in slot indexing; TriangleUtils.compact drops the dead slots and
                remaps the neighbours (a neighbour pointing at a carved slot collapses
@@ -688,7 +686,7 @@ public final class ConstrainedDelaunayTriangulator {
             /* The flat point store is materialized to the modelled List<Point> form
                here, at the phase boundary; the recovered subsegment list is adopted
                directly (the PSLG is single-use). */
-            return new TriangleMesherOutput2(pslg.points.toPointList(),
+            return new ModelledOutput(pslg.points.toPointList(),
                     TriangleUtils.compact(slots), pslg.segments, attr != null);
         }
     }

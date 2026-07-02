@@ -3,7 +3,6 @@ package com.acme.triangle.impl;
 import com.acme.triangle.Constraint;
 import com.acme.triangle.ImmutableTriangle;
 import com.acme.triangle.Point;
-import com.acme.triangle.TriangleMesherOutput2;
 import com.google.common.collect.ImmutableList;
 import it.unimi.dsi.fastutil.Hash;
 import it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue;
@@ -114,13 +113,13 @@ final class IncrementalCdt {
     private final double lensFactor;
 
     /** Diametral-circle encroachment (conservative; structural tests use this). */
-    IncrementalCdt(TriangleMesherOutput2 base) {
+    IncrementalCdt(ModelledOutput base) {
         this(base, 45.0);           /* cos^2(45) = 0.5 makes the lens the circle */
     }
 
     /** Encroachment via Triangle's diametral lens for the given quality bound
         (the bound the refinement loop is meshing toward). */
-    IncrementalCdt(TriangleMesherOutput2 base, double minAngleDegrees) {
+    IncrementalCdt(ModelledOutput base, double minAngleDegrees) {
         double g = Math.cos(Math.toRadians(minAngleDegrees));
         g = g * g;
         lensFactor = (2.0 * g - 1.0) * (2.0 * g - 1.0);
@@ -626,7 +625,7 @@ final class IncrementalCdt {
         return dot * dot >= lensFactor * (dax * dax + day * day) * (dbx * dbx + dby * dby);
     }
 
-    TriangleMesherOutput2 toOutput() {
+    ModelledOutput toOutput() {
         /* Drop dead slots and remap neighbour links to the compacted indexing. */
         List<ImmutableTriangle> outTriangles = TriangleUtils.compact(tris);
 
@@ -637,7 +636,7 @@ final class IncrementalCdt {
 
         /* The flat store materialized to the modelled List<Point> form - the mesh
            keeps its own growable store rather than handing out its internals. */
-        return new TriangleMesherOutput2(points.toPointList(), outTriangles,
+        return new ModelledOutput(points.toPointList(), outTriangles,
                 outSegments.build(), haveAttr);
     }
 

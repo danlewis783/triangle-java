@@ -4,11 +4,8 @@ import com.acme.triangle.MeshContractException;
 import com.acme.triangle.Point;
 import com.acme.triangle.Region;
 import com.acme.triangle.TriangleMesher;
-import com.acme.triangle.TriangleMesher2;
 import com.acme.triangle.TriangleMesherInput;
-import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
-import com.acme.triangle.TriangleMesherOutput2;
 
 import it.unimi.dsi.fastutil.ints.IntList;
 import org.jspecify.annotations.Nullable;
@@ -37,7 +34,7 @@ import java.util.List;
  * assumes the input segments do not cross each other (true for quality inputs
  * here); the constrained-Delaunay step handles crossings for the unrefined case.
  */
-public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2 {
+public final class JavaTriangleMesher implements TriangleMesher {
 
     /** Off-centre placement aims this many degrees above the requested bound so
         new triangles clear the threshold rather than sitting exactly on it. */
@@ -59,18 +56,19 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        return mesh(TriangleMesherInput2.from(input)).toFlat();
+        return mesh(ModelledInput.from(input)).toFlat();
     }
 
-    @Override
-    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
+    /** The pipeline over the modelled form; conversion happens only at the
+        public {@code mesh} boundary above. */
+    private ModelledOutput mesh(ModelledInput input) {
         if (!needsRefinement(input)) {
             return ConstrainedDelaunayTriangulator.triangulate(input);
         }
         return refine(input);
     }
 
-    private static boolean needsRefinement(TriangleMesherInput2 input) {
+    private static boolean needsRefinement(ModelledInput input) {
         if (input.getMinAngleDegrees() > 0) {
             return true;
         }
@@ -82,7 +80,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         return false;
     }
 
-    private TriangleMesherOutput2 refine(TriangleMesherInput2 input) {
+    private ModelledOutput refine(ModelledInput input) {
         double bound = input.getMinAngleDegrees();
         /* Below-bound test uses squared cosine vs cos^2(bound) - no trig per
            triangle (Triangle does the same, triangle.c:4036). */

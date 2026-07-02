@@ -1,11 +1,8 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.TriangleMesher;
-import com.acme.triangle.TriangleMesher2;
 import com.acme.triangle.TriangleMesherInput;
-import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
-import com.acme.triangle.TriangleMesherOutput2;
 import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
 import java.util.ArrayList;
@@ -24,16 +21,9 @@ import org.jspecify.annotations.Nullable;
  * safe. Note also that Triangle aborts the process on a fatal input error
  * rather than returning, so callers must supply valid geometry.
  */
-public final class NativeTriangleMesher implements TriangleMesher, TriangleMesher2 {
+public final class NativeTriangleMesher implements TriangleMesher {
 
     private static final Object LOCK = new Object();
-
-    /** Modelled entry point: convert to the flat form this adapter marshals to
-        native, then repack the result - the conversion lives on the DTOs. */
-    @Override
-    public TriangleMesherOutput2 mesh(TriangleMesherInput2 input) {
-        return TriangleMesherOutput2.from(mesh(input.toFlat()));
-    }
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {

@@ -4,9 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
 import com.acme.triangle.TriangleMesherInput;
-import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
-import com.acme.triangle.TriangleMesherOutput2;
 import com.acme.triangle.contract.MeshValidator;
 import com.acme.triangle.contract.ScenarioFixtures;
 import com.acme.triangle.contract.ScenarioFixtures.Scenario;
@@ -30,8 +28,8 @@ class IncrementalCdtTest {
         List<DynamicTest> tests = new ArrayList<>();
         for (Scenario s : ScenarioFixtures.all()) {
             tests.add(dynamicTest(s.name, () -> {
-                TriangleMesherOutput2 base =
-                        ConstrainedDelaunayTriangulator.triangulate(TriangleMesherInput2.from(s.input));
+                ModelledOutput base =
+                        ConstrainedDelaunayTriangulator.triangulate(ModelledInput.from(s.input));
                 if (base.getTriangles().size() == 0) {
                     return;                         /* nothing to refine into */
                 }
@@ -64,8 +62,8 @@ class IncrementalCdtTest {
         List<DynamicTest> tests = new ArrayList<>();
         for (Scenario s : ScenarioFixtures.all()) {
             tests.add(dynamicTest(s.name, () -> {
-                TriangleMesherOutput2 base =
-                        ConstrainedDelaunayTriangulator.triangulate(TriangleMesherInput2.from(s.input));
+                ModelledOutput base =
+                        ConstrainedDelaunayTriangulator.triangulate(ModelledInput.from(s.input));
                 if (base.getTriangles().size() == 0 || base.getSegments().isEmpty()) {
                     return;
                 }
