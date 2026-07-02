@@ -2,7 +2,6 @@ package com.acme.triangle.impl;
 
 import com.acme.triangle.Constraint;
 import com.acme.triangle.ImmutableTriangle;
-import com.acme.triangle.Point;
 import com.google.common.collect.ImmutableList;
 import it.unimi.dsi.fastutil.Hash;
 import it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue;
@@ -201,22 +200,18 @@ final class IncrementalCdt {
     }
 
     /**
-     * Insert a point lying strictly inside the meshed domain (not on a segment)
-     * via constrained Bowyer-Watson, locating its containing triangle by a full
-     * scan. The refinement hot path uses this method instead, seeding from the
-     * triangle it already holds; this overload is for callers inserting an
-     * arbitrary interior point with no triangle in hand.
+     * Insert a free point lying strictly inside triangle {@code containing} (and
+     * not on a segment) via constrained Bowyer-Watson. The refinement path uses
+     * {@link #insertInteriorOrEncroachedSegment}, which additionally folds in the
+     * encroachment guard; this entry is for a caller that already knows the
+     * containing triangle (e.g. the structural tests).
      *
      * @return the new vertex index
      */
-    int insertInteriorPoint(Point p) {
-        int start = locate(p.getX(), p.getY());
-        if (start < 0) {
-            throw new IllegalArgumentException("point is not inside the domain");
-        }
-        int pIdx = points.add(p.getX(), p.getY());
+    int insertInteriorPoint(double x, double y, int containing) {
+        int pIdx = points.add(x, y);
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
-        insertViaCavity(pIdx, new int[]{start}, -1L);
+        insertViaCavity(pIdx, new int[]{containing}, -1L);
         return pIdx;
     }
 
@@ -673,50 +668,7 @@ final class IncrementalCdt {
         return true;
     }
 
-    /** Centroid of the current largest-area triangle (a robust interior point). */
-    Point centroidOfLargestTriangle() {
-        int best = -1;
-        double bestArea = -1;
-        for (int i = 0; i < tris.slotCount(); i++) {
-            if (!tris.isLive(i)) {
-                continue;
-            }
-            int a = tris.a(i);
-            int b = tris.b(i);
-            int c = tris.c(i);
-            double area = Math.abs((points.x(b) - points.x(a)) * (points.y(c) - points.y(a))
-                    - (points.y(b) - points.y(a)) * (points.x(c) - points.x(a))) / 2.0;
-            if (area > bestArea) {
-                bestArea = area;
-                best = i;
-            }
-        }
-        int a = tris.a(best);
-        int b = tris.b(best);
-        int c = tris.c(best);
-        double cx = (points.x(a) + points.x(b) + points.x(c)) / 3.0;
-        double cy = (points.y(a) + points.y(b) + points.y(c)) / 3.0;
-        return new Point(cx, cy);
-    }
-
     /* --- helpers (mirroring ConstrainedDelaunayTriangulator) ----------------- */
-
-    private int locate(double x, double y) {
-        for (int i = 0; i < tris.slotCount(); i++) {
-            if (!tris.isLive(i)) {
-                continue;
-            }
-            int s1 = orientXY(tris.a(i), tris.b(i), x, y);
-            int s2 = orientXY(tris.b(i), tris.c(i), x, y);
-            int s3 = orientXY(tris.c(i), tris.a(i), x, y);
-            boolean nonNeg = s1 >= 0 && s2 >= 0 && s3 >= 0;
-            boolean nonPos = s1 <= 0 && s2 <= 0 && s3 <= 0;
-            if ((nonNeg || nonPos) && !(s1 == 0 && s2 == 0 && s3 == 0)) {
-                return i;
-            }
-        }
-        return -1;
-    }
 
     private boolean inCircle(int t, double px, double py) {
         return Geometry.inCircle(points, tris.a(t), tris.b(t), tris.c(t), px, py);

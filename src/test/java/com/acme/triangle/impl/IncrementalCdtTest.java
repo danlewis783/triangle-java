@@ -39,7 +39,7 @@ class IncrementalCdtTest {
 
                 int inserts = 8;
                 for (int i = 0; i < inserts; i++) {
-                    mesh.insertInteriorPoint(mesh.centroidOfLargestTriangle());
+                    insertCentroidOfLargestTriangle(mesh);
                 }
 
                 assertThat(mesh.adjacencyConsistent())
@@ -75,7 +75,7 @@ class IncrementalCdtTest {
                 }
                 /* A few interior points too, exercising both paths together. */
                 for (int i = 0; i < 4; i++) {
-                    mesh.insertInteriorPoint(mesh.centroidOfLargestTriangle());
+                    insertCentroidOfLargestTriangle(mesh);
                 }
 
                 assertThat(mesh.adjacencyConsistent())
@@ -88,6 +88,36 @@ class IncrementalCdtTest {
             }));
         }
         return tests;
+    }
+
+    /** Insert a fresh vertex at the centroid of the current largest live
+        triangle - a robustly interior point, and the containing triangle comes
+        for free. Test-side geometry over the mesh's package-visible stores. */
+    private static void insertCentroidOfLargestTriangle(IncrementalCdt mesh) {
+        FlatTriangleList tris = mesh.triangles();
+        FlatPointList points = mesh.points();
+        int best = -1;
+        double bestArea = -1;
+        for (int i = 0; i < tris.slotCount(); i++) {
+            if (!tris.isLive(i)) {
+                continue;
+            }
+            int a = tris.a(i);
+            int b = tris.b(i);
+            int c = tris.c(i);
+            double area = Math.abs((points.x(b) - points.x(a)) * (points.y(c) - points.y(a))
+                    - (points.y(b) - points.y(a)) * (points.x(c) - points.x(a))) / 2.0;
+            if (area > bestArea) {
+                bestArea = area;
+                best = i;
+            }
+        }
+        int a = tris.a(best);
+        int b = tris.b(best);
+        int c = tris.c(best);
+        double cx = (points.x(a) + points.x(b) + points.x(c)) / 3.0;
+        double cy = (points.y(a) + points.y(b) + points.y(c)) / 3.0;
+        mesh.insertInteriorPoint(cx, cy, best);
     }
 
     /** A copy of the input with the angle bound and per-region area limits
