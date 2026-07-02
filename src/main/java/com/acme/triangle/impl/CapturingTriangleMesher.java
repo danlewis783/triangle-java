@@ -11,11 +11,15 @@ import java.util.Date;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Decorator that captures mesher inputs as JSON when enabled by system property.
+ * Decorator that captures mesher inputs and outputs as JSON when enabled by
+ * system property.
  * <p>
  * Enable with `-Dtriangle.captureCases=true`. The capture directory is taken
  * from `-Dtriangle.captureDir=...`; if absent, a directory under
- * `java.io.tmpdir` is used.
+ * `java.io.tmpdir` is used. Each call writes a base-name-matched pair: the
+ * input before meshing (so a crash still leaves the repro on disk) and the
+ * output once the delegate returns, so a failed mesh leaves an input dump
+ * with no output counterpart.
  */
 public final class CapturingTriangleMesher implements TriangleMesher {
 
@@ -38,18 +42,19 @@ public final class CapturingTriangleMesher implements TriangleMesher {
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        if (enabled) {
-            captureInput(input);
+        if (!enabled) {
+            return delegate.mesh(input);
         }
-        return delegate.mesh(input);
+        String baseName = nextBaseName();
+        TriangleJson.writeInput(captureDir.resolve(baseName + "-input.json"), input, baseName);
+        TriangleMesherOutput output = delegate.mesh(input);
+        TriangleJson.writeOutput(captureDir.resolve(baseName + "-output.json"), output, baseName);
+        return output;
     }
 
-    private void captureInput(TriangleMesherInput input) {
+    private String nextBaseName() {
         String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS").format(new Date());
-        long sequence = SEQUENCE.incrementAndGet();
-        String baseName = timestamp + "-" + pad(sequence) + "-" + mesherName;
-        Path path = captureDir.resolve(baseName + "-input.json");
-        TriangleJson.writeInput(path, input, baseName);
+        return timestamp + "-" + pad(SEQUENCE.incrementAndGet()) + "-" + mesherName;
     }
 
     private static Path resolveCaptureDir() {

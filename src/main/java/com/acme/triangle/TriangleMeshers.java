@@ -26,7 +26,7 @@ public final class TriangleMeshers {
         return new JavaTriangleMesher();
     }
 
-    /** Wrap a mesher so every input can optionally be captured as JSON. */
+    /** Wrap a mesher so every input and its output can optionally be captured as JSON. */
     public static TriangleMesher capturing(TriangleMesher delegate, String mesherName) {
         return new CapturingTriangleMesher(delegate, mesherName);
     }

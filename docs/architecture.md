@@ -92,9 +92,10 @@ rebuild (used by the structural tests).
   drop it in `src/test/resources/regression/` and it is meshed and
   contract-validated by both meshers on every test run (see the README there
   for the case history).
-- To capture *every* input, not just failures:
+- To capture *every* case, not just failures:
   `TriangleMeshers.capturing(mesher, "name")` with
-  `-Dtriangle.captureCases=true`.
+  `-Dtriangle.captureCases=true` writes a base-name-matched JSON pair per
+  call — the input before meshing, the output after it succeeds.
 - Exploration harnesses: `./gradlew bench` (java-vs-native wall clock over
   synthetic suites or a directory of captured JSON), `./gradlew jmh`
   (statistically rigorous sweep), `./gradlew profile --args="<scenario> <s>"`

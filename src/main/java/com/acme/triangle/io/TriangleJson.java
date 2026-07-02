@@ -1,6 +1,7 @@
 package com.acme.triangle.io;
 
 import com.acme.triangle.TriangleMesherInput;
+import com.acme.triangle.TriangleMesherOutput;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -10,12 +11,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * JSON reader/writer for benchmark fixtures and captured inputs.
+ * JSON reader/writer for benchmark fixtures and captured cases.
  * <p>
  * The on-disk format is a versioned document wrapper around
- * `TriangleMesherInput`, not raw Java serialization. Reads validate the
- * document type, version, and DTO array/count consistency before returning
- * the input object.
+ * `TriangleMesherInput` or `TriangleMesherOutput`, not raw Java
+ * serialization. Reads validate the document type, version, and DTO
+ * array/count consistency before returning the payload object.
  */
 public final class TriangleJson {
 
@@ -59,6 +60,42 @@ public final class TriangleJson {
             MAPPER.writeValue(path.toFile(), doc);
         } catch (IOException e) {
             throw new UncheckedIOException("failed to write triangle input JSON: " + path, e);
+        }
+    }
+
+    public static TriangleMesherOutput readOutput(Path path) {
+        TriangleMesherOutputDocument doc = readOutputDocument(path);
+        if (doc.output == null) {
+            throw new IllegalArgumentException("document has no output: " + path);
+        }
+        return doc.output;
+    }
+
+    public static TriangleMesherOutputDocument readOutputDocument(Path path) {
+        try {
+            TriangleMesherOutputDocument doc =
+                    MAPPER.readValue(path.toFile(), TriangleMesherOutputDocument.class);
+            validate(doc);
+            return doc;
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to read triangle output JSON: " + path, e);
+        }
+    }
+
+    public static void writeOutput(Path path, TriangleMesherOutput output, String name) {
+        writeOutputDocument(path, TriangleMesherOutputDocument.of(name, output));
+    }
+
+    public static void writeOutputDocument(Path path, TriangleMesherOutputDocument doc) {
+        validate(doc);
+        try {
+            Path parent = path.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            MAPPER.writeValue(path.toFile(), doc);
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to write triangle output JSON: " + path, e);
         }
     }
 
@@ -109,6 +146,61 @@ public final class TriangleJson {
             throw new IllegalArgumentException(
                     "regionList length " + regionList.length + " does not match numberOfRegions "
                             + in.numberOfRegions);
+        }
+    }
+
+    private static void validate(TriangleMesherOutputDocument doc) {
+        if (doc == null) {
+            throw new IllegalArgumentException("document must not be null");
+        }
+        if (doc.formatVersion != 1) {
+            throw new IllegalArgumentException("unsupported formatVersion: " + doc.formatVersion);
+        }
+        if (!"triangle-mesher-output".equals(doc.documentType)) {
+            throw new IllegalArgumentException("unexpected documentType: " + doc.documentType);
+        }
+        if (doc.output == null) {
+            throw new IllegalArgumentException("document output must not be null");
+        }
+        validate(doc.output);
+    }
+
+    private static void validate(TriangleMesherOutput out) {
+        double[] pointList = out.pointList != null ? out.pointList : new double[0];
+        int[] triangleList = out.triangleList != null ? out.triangleList : new int[0];
+        int[] neighborList = out.neighborList != null ? out.neighborList : new int[0];
+
+        if (pointList.length != out.numberOfPoints * 2) {
+            throw new IllegalArgumentException(
+                    "pointList length " + pointList.length + " does not match numberOfPoints "
+                            + out.numberOfPoints);
+        }
+        if (triangleList.length != out.numberOfTriangles * 3) {
+            throw new IllegalArgumentException(
+                    "triangleList length " + triangleList.length
+                            + " does not match numberOfTriangles " + out.numberOfTriangles);
+        }
+        if (neighborList.length != out.numberOfTriangles * 3) {
+            throw new IllegalArgumentException(
+                    "neighborList length " + neighborList.length
+                            + " does not match numberOfTriangles " + out.numberOfTriangles);
+        }
+        if (out.triangleAttributeList != null
+                && out.triangleAttributeList.length != out.numberOfTriangles) {
+            throw new IllegalArgumentException(
+                    "triangleAttributeList length " + out.triangleAttributeList.length
+                            + " does not match numberOfTriangles " + out.numberOfTriangles);
+        }
+        if (out.segmentList != null && out.segmentList.length != out.numberOfSegments * 2) {
+            throw new IllegalArgumentException(
+                    "segmentList length " + out.segmentList.length
+                            + " does not match numberOfSegments " + out.numberOfSegments);
+        }
+        if (out.segmentMarkerList != null
+                && out.segmentMarkerList.length != out.numberOfSegments) {
+            throw new IllegalArgumentException(
+                    "segmentMarkerList length " + out.segmentMarkerList.length
+                            + " does not match numberOfSegments " + out.numberOfSegments);
         }
     }
 }
