@@ -91,6 +91,11 @@ final class IncrementalCdt {
     private int[] fanAsW = new int[0];
     private int[] fanAsWGen = new int[0];
 
+    /* Reusable cavity-flood stack (triangle slot ids): the gather pushes every
+       cavity candidate through here, and a boxed ArrayDeque per insertion was
+       ~14% of area-constrained refinement in the JFR profile. */
+    private int[] floodStack = new int[64];
+
     /* Encroachment lens factor: subsegment (a,b) is encroached by p iff the
        angle a-p-b is obtuse AND cos^2 of it is at least this - i.e. p lies in
        the diametral *lens* determined by the angle bound (Triangle's default
@@ -370,15 +375,16 @@ final class IncrementalCdt {
                              List<Integer> cavity, List<BoundaryEdge> fan,
                              boolean checkEncroach) {
         gen++;
-        Deque<Integer> stack = new ArrayDeque<>();
+        int[] stack = floodStack;
+        int top = 0;
         for (int s : seeds) {
             if (cavityGen[s] != gen) {
                 cavityGen[s] = gen;
-                stack.push(s);
+                stack[top++] = s;
             }
         }
-        while (!stack.isEmpty()) {
-            int t = stack.pop();
+        while (top > 0) {
+            int t = stack[--top];
             cavity.add(t);
             Triangle tc = tris.get(t);
             for (int j = 0; j < 3; j++) {
@@ -393,7 +399,10 @@ final class IncrementalCdt {
                 }
                 if (inCircle(tris.get(nb), p)) {
                     cavityGen[nb] = gen;
-                    stack.push(nb);
+                    if (top == stack.length) {
+                        floodStack = stack = Arrays.copyOf(stack, top * 2);
+                    }
+                    stack[top++] = nb;
                 }
             }
         }

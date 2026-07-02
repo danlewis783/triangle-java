@@ -11,11 +11,10 @@ import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.TriangleMesherOutput2;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.PriorityQueue;
 
 /**
@@ -89,12 +88,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
            triangle (Triangle does the same, triangle.c:4036). */
         double cosBound = Math.cos(Math.toRadians(bound));
         double cosSqBound = cosBound * cosBound;
-        Map<Double, Double> maxAreaByAttr = new HashMap<>();
-        for (Region r : input.getRegions()) {
-            if (r.getMaxArea() > 0) {
-                maxAreaByAttr.put(r.getAttribute(), r.getMaxArea());
-            }
-        }
+        AreaBounds areaBounds = AreaBounds.of(input.getRegions());
 
         /* Build the constrained Delaunay mesh once, then refine it in place: each
            Steiner point or subsegment split updates the mesh locally instead of
@@ -112,7 +106,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         List<Triangle> seed = mesh.trianglesView();
         for (int id = 0; id < seed.size(); id++) {
             if (seed.get(id) != null) {
-                enqueueIfBad(bad, mesh, id, cosSqBound, maxAreaByAttr);
+                enqueueIfBad(bad, mesh, id, cosSqBound, areaBounds);
             }
         }
 
@@ -131,7 +125,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
             int seg = mesh.pollEncroachedSubsegment();
             if (seg >= 0) {
                 mesh.splitSegment(seg);
-                enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
+                enqueueFan(bad, mesh, cosSqBound, areaBounds);
             } else {
                 int t = dequeueValidBad(bad, mesh);
                 if (t < 0) {
@@ -147,12 +141,12 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                 int encroached = mesh.insertInteriorOrEncroachedSegment(centre, t);
                 if (encroached >= 0) {
                     mesh.splitSegment(encroached);
-                    enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
+                    enqueueFan(bad, mesh, cosSqBound, areaBounds);
                     /* The off-centre was rejected, not inserted; t is unrefined, so
                        requeue it (no-op if the split happened to destroy it). */
-                    enqueueIfBad(bad, mesh, t, cosSqBound, maxAreaByAttr);
+                    enqueueIfBad(bad, mesh, t, cosSqBound, areaBounds);
                 } else {
-                    enqueueFan(bad, mesh, cosSqBound, maxAreaByAttr);
+                    enqueueFan(bad, mesh, cosSqBound, areaBounds);
                 }
             }
 
@@ -162,6 +156,58 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                         Collections.singletonList("quality: minimum angle bound "
                                 + bound + " degrees not reached"));
             }
+        }
+    }
+
+    /**
+     * Per-region maximum-area bounds keyed by region attribute, as parallel
+     * arrays - a handful of entries scanned linearly. This test runs on every
+     * bad-triangle check, and the {@code Map<Double, Double>} it replaces boxed
+     * the attribute on each lookup (~10% of area-constrained refinement in the
+     * JFR profile). Duplicate attributes keep the last bound, like the map did.
+     */
+    private static final class AreaBounds {
+        private final double[] attrs;
+        private final double[] bounds;
+
+        private AreaBounds(double[] attrs, double[] bounds) {
+            this.attrs = attrs;
+            this.bounds = bounds;
+        }
+
+        static AreaBounds of(List<Region> regions) {
+            double[] attrs = new double[regions.size()];
+            double[] bounds = new double[regions.size()];
+            int n = 0;
+            for (Region r : regions) {
+                if (r.getMaxArea() <= 0) {
+                    continue;
+                }
+                int i = 0;
+                while (i < n && attrs[i] != r.getAttribute()) {
+                    i++;
+                }
+                attrs[i] = r.getAttribute();
+                bounds[i] = r.getMaxArea();
+                if (i == n) {
+                    n++;
+                }
+            }
+            return new AreaBounds(Arrays.copyOf(attrs, n), Arrays.copyOf(bounds, n));
+        }
+
+        boolean isEmpty() {
+            return attrs.length == 0;
+        }
+
+        /** The area bound for {@code attr}, or -1 if that region has none. */
+        double boundFor(double attr) {
+            for (int i = 0; i < attrs.length; i++) {
+                if (attrs[i] == attr) {
+                    return bounds[i];
+                }
+            }
+            return -1;
         }
     }
 
@@ -185,7 +231,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         live mesh, so a dead slot is silently skipped. */
     private static void enqueueIfBad(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
                                      int id, double cosSqBound,
-                                     Map<Double, Double> maxAreaByAttr) {
+                                     AreaBounds areaBounds) {
         Triangle tc = mesh.trianglesView().get(id);
         if (tc == null) {
             return;
@@ -198,9 +244,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         Point b = points.get(ib);
         Point c = points.get(ic);
         boolean isBad = false;
-        if (!maxAreaByAttr.isEmpty() && mesh.hasAttributes()) {
-            Double maxArea = maxAreaByAttr.get(tc.getAttr());
-            isBad = maxArea != null && triangleArea(a, b, c) > maxArea;
+        if (!areaBounds.isEmpty() && mesh.hasAttributes()) {
+            double maxArea = areaBounds.boundFor(tc.getAttr());
+            isBad = maxArea > 0 && triangleArea(a, b, c) > maxArea;
         }
         if (!isBad) {
             isBad = belowAngleBound(a, b, c, cosSqBound)
@@ -216,9 +262,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     /** Re-test the triangles the most recent mutation created (the mesh's last
         fan), enqueuing any that are bad - the dirty set in place of a full rescan. */
     private static void enqueueFan(PriorityQueue<BadTri> bad, IncrementalCdt mesh,
-                                   double cosSqBound, Map<Double, Double> maxAreaByAttr) {
+                                   double cosSqBound, AreaBounds areaBounds) {
         for (int id : mesh.lastFanTriangles()) {
-            enqueueIfBad(bad, mesh, id, cosSqBound, maxAreaByAttr);
+            enqueueIfBad(bad, mesh, id, cosSqBound, areaBounds);
         }
     }
 
