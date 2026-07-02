@@ -1,17 +1,12 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.Triangle;
-
 /**
- * The three CCW corner vertex indices of a triangle during the construction
- * phase - the initial Delaunay ({@link DelaunayTriangulator}) and constraint
- * recovery ({@link ConstrainedDelaunayTriangulator}). There, triangles are
- * whole-replaced (a flip or cavity refill drops triangles and adds new ones),
- * never edited in place, and adjacency and attributes are derived on demand
- * rather than carried - so a corner-triple is all a triangle is. Hence
- * immutable, and deliberately distinct from {@link Triangle}, the refinement
- * kernel's mutable arena cell, which additionally maintains neighbour links and
- * a region attribute.
+ * The three CCW corner vertex indices of a triangle at the phase boundary
+ * between the initial Delaunay ({@link DelaunayTriangulator}) and constraint
+ * recovery ({@link ConstrainedDelaunayTriangulator}): the handoff carries only
+ * corners, since the consumer derives adjacency and attributes itself. Hence
+ * immutable, and deliberately distinct from {@link FlatTriangleList}, the
+ * arena that additionally maintains neighbour links and a region attribute.
  */
 final class Corners {
 

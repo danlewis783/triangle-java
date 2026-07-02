@@ -1,6 +1,5 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.Triangle;
 import it.unimi.dsi.fastutil.Hash;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 
@@ -32,7 +31,7 @@ final class Topology {
     /**
      * Reads corner {@code c} (0, 1, 2) of triangle {@code t}. The indirection is
      * what lets {@link #neighbors} build adjacency over a flat {@code int[]}, a
-     * {@link Triangle} list, or a {@link Corners} list alike.
+     * {@link FlatTriangleList}, or a {@link Corners} list alike.
      */
     @FunctionalInterface
     interface Corner {

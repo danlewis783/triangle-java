@@ -24,6 +24,33 @@ final class TriangleUtils {
     }
 
     /**
+     * @param tris the triangle arena, each live slot carrying neighbour ids in
+     *             <em>slot</em> indexing
+     * @return the live triangles in slot order, neighbour ids remapped to the
+     *         compacted output indexing (dead neighbours become a boundary, -1)
+     */
+    static ImmutableList<ImmutableTriangle> compact(FlatTriangleList tris) {
+        int[] remap = new int[tris.slotCount()];
+        Arrays.fill(remap, -1);
+        int n = 0;
+        for (int i = 0; i < tris.slotCount(); i++) {
+            if (tris.isLive(i)) {
+                remap[i] = n++;
+            }
+        }
+        ImmutableList.Builder<ImmutableTriangle> packed = ImmutableList.builderWithExpectedSize(n);
+        for (int i = 0; i < tris.slotCount(); i++) {
+            if (!tris.isLive(i)) {
+                continue;
+            }
+            packed.add(new DefaultImmutableTriangle(tris.a(i), tris.b(i), tris.c(i),
+                    mapNbr(tris.neighbor(i, 0), remap), mapNbr(tris.neighbor(i, 1), remap),
+                    mapNbr(tris.neighbor(i, 2), remap), tris.attr(i)));
+        }
+        return packed.build();
+    }
+
+    /**
      * @param slots one cell per slot, {@code null} for a dead/removed slot, each
      *              triangle carrying neighbour ids in <em>slot</em> indexing
      * @return the live triangles in slot order, neighbour ids remapped to the

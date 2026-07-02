@@ -5,10 +5,8 @@ import java.util.Arrays;
 import java.util.List;
 
 import com.acme.triangle.Point;
-import com.acme.triangle.Triangle;
 import com.acme.triangle.predicate.Predicates;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
-import org.jspecify.annotations.Nullable;
 
 /**
  * Delaunay triangulation of a point set by incremental Bowyer-Watson insertion
@@ -53,11 +51,11 @@ public final class DelaunayTriangulator {
     }
 
     /**
-     * The incremental triangulation in progress: a triangle arena ({@link
-     * Triangle} slots carrying their own neighbour links, dead slots nulled and
-     * reused) over a working {@code List<Point>} that is the input plus three
-     * super-triangle vertices enclosing it. The {@code attr} field of each
-     * {@link Triangle} is unused here (phase 1 has no regions).
+     * The incremental triangulation in progress: a {@link FlatTriangleList}
+     * arena (slots carrying their own neighbour links, dead slots reused) over a
+     * flat coordinate array that is the input plus three super-triangle vertices
+     * enclosing it. The arena's attribute facet is unused here (phase 1 has no
+     * regions).
      */
     private static final class Builder {
 
@@ -72,8 +70,7 @@ public final class DelaunayTriangulator {
         private double[] xy;                              /* interleaved coords: vertex i at (xy[2i], xy[2i+1]); input points + super-triangle */
         private int size;                                 /* live vertex count in xy */
         private final int n;                              /* number of input points (before super-triangle) */
-        private final List<@Nullable Triangle> tris = new ArrayList<>();
-        private final IntArrayList free = new IntArrayList();    /* dead slots, LIFO */
+        private final FlatTriangleList tris;              /* the triangle arena (attr unused here) */
         private int[] cavityGen;                          /* gen-stamped cavity membership */
         private int gen;
         private int recent;                               /* a live triangle to start walks from */
@@ -107,6 +104,7 @@ public final class DelaunayTriangulator {
                 xy[2 * i + 1] = pts.y(i);
             }
             this.size = n;
+            this.tris = new FlatTriangleList(2 * n + 8);  /* a Delaunay mesh has ~2n triangles */
             cavityGen = new int[16];
             fanAsU = new int[n + 3];
             fanAsUGen = new int[n + 3];
@@ -155,12 +153,7 @@ public final class DelaunayTriangulator {
             int sb = add(cx + m, cy - m);
             int sc = add(cx, cy + m);
 
-            Triangle ccw = new Triangle(sa, sb, sc, -1, -1, -1, 0.0);
-
-            //noinspection UnnecessaryLocalVariable
-            int result = allocSlot(ccw);
-
-            return result;
+            return allocSlot(sa, sb, sc, -1);
         }
 
         /** Append a vertex, returning its index. */
@@ -178,9 +171,9 @@ public final class DelaunayTriangulator {
             }
             /* Keep the triangles not incident to a super-triangle vertex. */
             List<Corners> kept = new ArrayList<>();
-            for (Triangle t : tris) {
-                if (t != null && t.getA() < n && t.getB() < n && t.getC() < n) {
-                    kept.add(new Corners(t.getA(), t.getB(), t.getC()));
+            for (int t = 0; t < tris.slotCount(); t++) {
+                if (tris.isLive(t) && tris.a(t) < n && tris.b(t) < n && tris.c(t) < n) {
+                    kept.add(new Corners(tris.a(t), tris.b(t), tris.c(t)));
                 }
             }
             return kept;
@@ -199,14 +192,13 @@ public final class DelaunayTriangulator {
             while (!flood.isEmpty()) {
                 int t = flood.popInt();
                 cavity.add(t);
-                Triangle tc = tris.get(t);
                 for (int j = 0; j < 3; j++) {
-                    int nb = tc.neighbor(j);
-                    int u = tc.corner((j + 1) % 3), w = tc.corner((j + 2) % 3);
+                    int nb = tris.neighbor(t, j);
+                    int u = tris.corner(t, (j + 1) % 3), w = tris.corner(t, (j + 2) % 3);
                     if (nb >= 0 && cavityGen[nb] == gen) {
                         continue;                         /* shared interior cavity edge */
                     }
-                    if (nb >= 0 && inCircle(tris.get(nb), px, py)) {
+                    if (nb >= 0 && inCircle(nb, px, py)) {
                         cavityGen[nb] = gen;
                         flood.push(nb);                   /* nb joins the cavity */
                     } else {
@@ -217,7 +209,7 @@ public final class DelaunayTriangulator {
                 }
             }
             for (int i = 0; i < cavity.size(); i++) {
-                freeSlot(cavity.getInt(i));
+                tris.free(cavity.getInt(i));
             }
             recent = refan(p);
         }
@@ -235,28 +227,27 @@ public final class DelaunayTriangulator {
             int last = -1;
             for (int i = 0; i < fan.size(); i += 3) {
                 int u = fan.getInt(i), w = fan.getInt(i + 1), nb = fan.getInt(i + 2);
-                int id = allocSlot(new Triangle(u, w, p, -1, -1, nb, 0.0));
+                int id = allocSlot(u, w, p, nb);
                 last = id;
                 if (nb >= 0) {                            /* repoint the outer ring */
-                    Triangle nc = tris.get(nb);
                     for (int k = 0; k < 3; k++) {
-                        if (nc.corner(k) != u && nc.corner(k) != w) {
-                            nc.setNeighbor(k, id);
+                        if (tris.corner(nb, k) != u && tris.corner(nb, k) != w) {
+                            tris.setNeighbor(nb, k, id);
                             break;
                         }
                     }
                 }
                 if (fanAsWGen[u] == gen) {                /* shares the (p,u) edge */
                     int mu = fanAsW[u];
-                    tris.get(id).setN1(mu);
-                    tris.get(mu).setN0(id);
+                    tris.setNeighbor(id, 1, mu);
+                    tris.setNeighbor(mu, 0, id);
                 }
                 fanAsU[u] = id;
                 fanAsUGen[u] = gen;
                 if (fanAsUGen[w] == gen) {                /* shares the (w,p) edge */
                     int mw = fanAsU[w];
-                    tris.get(id).setN0(mw);
-                    tris.get(mw).setN1(id);
+                    tris.setNeighbor(id, 0, mw);
+                    tris.setNeighbor(mw, 1, id);
                 }
                 fanAsW[w] = id;
                 fanAsWGen[w] = gen;
@@ -272,16 +263,15 @@ public final class DelaunayTriangulator {
          */
         private int locate(double px, double py) {
             int t = recent, prev = -1;
-            int steps = 0, limit = tris.size() + 8;
+            int steps = 0, limit = tris.slotCount() + 8;
             while (steps++ <= limit) {
-                Triangle tc = tris.get(t);
                 int next = -1;
                 for (int j = 0; j < 3; j++) {
-                    int nb = tc.neighbor(j);
+                    int nb = tris.neighbor(t, j);
                     if (nb < 0 || nb == prev) {
                         continue;
                     }
-                    int u = tc.corner((j + 1) % 3), w = tc.corner((j + 2) % 3);
+                    int u = tris.corner(t, (j + 1) % 3), w = tris.corner(t, (j + 2) % 3);
                     if (orient(u, w, px, py) < 0) {       /* pt is outside edge (u,w) */
                         next = nb;
                         break;
@@ -297,10 +287,10 @@ public final class DelaunayTriangulator {
         }
 
         private int locateByScan(double px, double py) {
-            for (int i = 0; i < tris.size(); i++) {
-                Triangle t = tris.get(i);
-                if (t != null && orient(t.getA(), t.getB(), px, py) >= 0
-                        && orient(t.getB(), t.getC(), px, py) >= 0 && orient(t.getC(), t.getA(), px, py) >= 0) {
+            for (int i = 0; i < tris.slotCount(); i++) {
+                if (tris.isLive(i) && orient(tris.a(i), tris.b(i), px, py) >= 0
+                        && orient(tris.b(i), tris.c(i), px, py) >= 0
+                        && orient(tris.c(i), tris.a(i), px, py) >= 0) {
                     return i;
                 }
             }
@@ -309,22 +299,12 @@ public final class DelaunayTriangulator {
 
         /* --- triangle arena -------------------------------------------------- */
 
-        private int allocSlot(Triangle t) {
-            int id;
-            if (!free.isEmpty()) {
-                id = free.popInt();
-                tris.set(id, t);
-            } else {
-                id = tris.size();
-                tris.add(t);
-                ensureCavityGen(id + 1);
-            }
+        /** Claim an arena slot for the CCW triangle {@code (a, b, c)} whose
+            boundary edge faces {@code nb}, growing the cavity stamps alongside. */
+        private int allocSlot(int a, int b, int c, int nb) {
+            int id = tris.alloc(a, b, c, -1, -1, nb, 0.0);
+            ensureCavityGen(tris.slotCount());
             return id;
-        }
-
-        private void freeSlot(int id) {
-            tris.set(id, null);
-            free.push(id);
         }
 
         private void ensureCavityGen(int size) {
@@ -333,11 +313,11 @@ public final class DelaunayTriangulator {
             }
         }
 
-        /* Predicates read the flat coordinate array directly (no List<Point> access,
-           no per-call Point allocation for the loose insertion point), routing to the
-           same robust kernel Geometry uses. */
-        private boolean inCircle(Triangle t, double px, double py) {
-            int a = t.getA(), b = t.getB(), c = t.getC();
+        /* Predicates read the flat stores directly (no per-call Point allocation
+           for the loose insertion point), routing to the same robust kernel
+           Geometry uses. */
+        private boolean inCircle(int t, double px, double py) {
+            int a = tris.a(t), b = tris.b(t), c = tris.c(t);
             return Predicates.incircle(
                     xy[2 * a], xy[2 * a + 1],
                     xy[2 * b], xy[2 * b + 1],

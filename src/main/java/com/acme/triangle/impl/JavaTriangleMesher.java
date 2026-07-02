@@ -3,7 +3,6 @@ package com.acme.triangle.impl;
 import com.acme.triangle.MeshContractException;
 import com.acme.triangle.Point;
 import com.acme.triangle.Region;
-import com.acme.triangle.Triangle;
 import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesher2;
 import com.acme.triangle.TriangleMesherInput;
@@ -103,9 +102,9 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
            the triangles each mutation changed (the mesh's "last fan"). Entries can
            go stale - their slot freed or reused - so revalidate on dequeue. */
         BadTriQueue bad = new BadTriQueue();
-        List<Triangle> seed = mesh.trianglesView();
-        for (int id = 0; id < seed.size(); id++) {
-            if (seed.get(id) != null) {
+        FlatTriangleList seed = mesh.triangles();
+        for (int id = 0; id < seed.slotCount(); id++) {
+            if (seed.isLive(id)) {
                 enqueueIfBad(bad, mesh, id, cosSqBound, areaBounds);
             }
         }
@@ -113,10 +112,10 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         int maxVertices = Math.max(input.getPoints().size() * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
         while (true) {
             /* Live views, re-fetched each iteration: with maintained adjacency
-               these are stable stores mutated in place (dead triangles appear as
-               null, so the scans skip them). A mutation may free/reuse slots, so a
-               triangle index is only valid until the next split/insert. */
-            List<Triangle> tris = mesh.trianglesView();
+               these are stable stores mutated in place (scans skip non-live
+               slots). A mutation may free/reuse slots, so a triangle index is
+               only valid until the next split/insert. */
+            FlatTriangleList tris = mesh.triangles();
             FlatPointList points = mesh.points();
 
             /* Ruppert: clear every encroached subsegment before any bad triangle.
@@ -304,17 +303,17 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
     private static void enqueueIfBad(BadTriQueue bad, IncrementalCdt mesh,
                                      int id, double cosSqBound,
                                      AreaBounds areaBounds) {
-        Triangle tc = mesh.trianglesView().get(id);
-        if (tc == null) {
+        FlatTriangleList tris = mesh.triangles();
+        if (!tris.isLive(id)) {
             return;
         }
         FlatPointList points = mesh.points();
-        int ia = tc.getA();
-        int ib = tc.getB();
-        int ic = tc.getC();
+        int ia = tris.a(id);
+        int ib = tris.b(id);
+        int ic = tris.c(id);
         boolean isBad = false;
         if (!areaBounds.isEmpty() && mesh.hasAttributes()) {
-            double maxArea = areaBounds.boundFor(tc.getAttr());
+            double maxArea = areaBounds.boundFor(tris.attr(id));
             isBad = maxArea > 0 && triangleArea(points, ia, ib, ic) > maxArea;
         }
         if (!isBad) {
@@ -343,22 +342,19 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         stale entries (slot freed, or reused for a different triangle). A surviving
         triangle's corners are unchanged, so it is still bad - no re-test needed. */
     private static int dequeueValidBad(BadTriQueue bad, IncrementalCdt mesh) {
-        List<Triangle> tris = mesh.trianglesView();
+        FlatTriangleList tris = mesh.triangles();
         for (BadTri e = bad.poll(); e != null; e = bad.poll()) {
-            Triangle cur = tris.get(e.id);
-            if (cur != null && sameCorners(cur, e.a, e.b, e.c)) {
+            if (tris.isLive(e.id) && sameCorners(tris, e.id, e.a, e.b, e.c)) {
                 return e.id;
             }
         }
         return -1;
     }
 
-    /** Whether {@code tc} has exactly the corner set {a, b, c} (the corners are
-        distinct, so containment in both directions reduces to this). */
-    private static boolean sameCorners(Triangle tc, int a, int b, int c) {
-        return (tc.getA() == a || tc.getB() == a || tc.getC() == a)
-                && (tc.getA() == b || tc.getB() == b || tc.getC() == b)
-                && (tc.getA() == c || tc.getB() == c || tc.getC() == c);
+    /** Whether triangle {@code t} has exactly the corner set {a, b, c} (the
+        corners are distinct, so containment in both directions reduces to this). */
+    private static boolean sameCorners(FlatTriangleList tris, int t, int a, int b, int c) {
+        return tris.hasCorner(t, a) && tris.hasCorner(t, b) && tris.hasCorner(t, c);
     }
 
     /**
@@ -452,12 +448,11 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
      * is numerically unreliable for skinny triangles). Aims a small margin above
      * the bound so the new triangle is not re-selected at exactly the threshold.
      */
-    private static Point offCentre(List<Triangle> tris, FlatPointList points,
+    private static Point offCentre(FlatTriangleList tris, FlatPointList points,
                                    int t, double boundDegrees) {
-        Triangle tc = tris.get(t);
-        int ia = tc.getA();
-        int ib = tc.getB();
-        int ic = tc.getC();
+        int ia = tris.a(t);
+        int ib = tris.b(t);
+        int ic = tris.c(t);
 
         //p,q = shortest edge; r = apex
         int p;
@@ -509,15 +504,13 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         return new Point(mx + h * nx, my + h * ny);
     }
 
-    private static Point circumcentre(List<Triangle> tris, FlatPointList points, int t) {
-        Triangle triangle = tris.get(t);
-
-        double ax = points.x(triangle.getA());
-        double ay = points.y(triangle.getA());
-        double bx = points.x(triangle.getB());
-        double by = points.y(triangle.getB());
-        double cx = points.x(triangle.getC());
-        double cy = points.y(triangle.getC());
+    private static Point circumcentre(FlatTriangleList tris, FlatPointList points, int t) {
+        double ax = points.x(tris.a(t));
+        double ay = points.y(tris.a(t));
+        double bx = points.x(tris.b(t));
+        double by = points.y(tris.b(t));
+        double cx = points.x(tris.c(t));
+        double cy = points.y(tris.c(t));
 
         double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
         double a2 = ax * ax + ay * ay;
