@@ -24,6 +24,7 @@ dependencies {
     implementation(libs.jackson.databind)
     implementation(libs.jspecify)
     implementation(libs.guava)
+    implementation(libs.fastutil.core)
     testImplementation(libs.assertj)
     // The bench source set sees the same dependencies as main (e.g. JNA).
     "benchImplementation"(sourceSets.main.get().output)
@@ -31,6 +32,7 @@ dependencies {
     "benchImplementation"(libs.jackson.databind)
     "benchImplementation"(libs.jspecify)
     "benchImplementation"(libs.guava)
+    "benchImplementation"(libs.fastutil.core)
     // JMH: core annotations/runner on the bench classpath, generator as the
     // annotation processor (emits the BenchmarkList + generated harness classes).
     "benchImplementation"(libs.jmh.core)

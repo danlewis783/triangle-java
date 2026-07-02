@@ -9,6 +9,8 @@ import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherInput2;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.TriangleMesherOutput2;
+import it.unimi.dsi.fastutil.Hash;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -276,9 +278,9 @@ public final class ConstrainedDelaunayTriangulator {
         private final int[] cor;          /* 3 corner vertex indices per triangle */
         private final int[] nbr;          /* 3 neighbour triangle ids per triangle, -1 on a boundary */
         private final int[] vtri;         /* one incident triangle per vertex, for the rotation walks */
-        /* Recovered segment edges (values unused): a primitive set, since the
+        /* Recovered segment edges: a primitive set, since the
            Delaunay-restoration loop probes it once per popped edge. */
-        private final LongIntMap segSet = new LongIntMap(64);
+        private final LongOpenHashSet segSet = new LongOpenHashSet(64, Hash.FAST_LOAD_FACTOR);
 
         CdtMesh(List<Point> pts, List<Corners> tris) {
             this.pts = pts;
@@ -427,7 +429,7 @@ public final class ConstrainedDelaunayTriangulator {
                     queue.add(e);                   /* reflex now; retry after others flip */
                 }
             }
-            segSet.put(key(a, b), 0);
+            segSet.add(key(a, b));
         }
 
         /**

@@ -1,6 +1,8 @@
 package com.acme.triangle.impl;
 
 import com.acme.triangle.Triangle;
+import it.unimi.dsi.fastutil.Hash;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 
 import java.util.Arrays;
 
@@ -50,7 +52,9 @@ final class Topology {
         Arrays.fill(neigh, -1);
         /* Edge -> the flat neigh slot (3*tri+corner) that first claimed it; the
            primitive map keeps this build allocation-free per edge. */
-        LongIntMap seen = new LongIntMap(3 * count / 2 + 1);
+        Long2IntOpenHashMap seen =
+                new Long2IntOpenHashMap(3 * count / 2 + 1, Hash.FAST_LOAD_FACTOR);
+        seen.defaultReturnValue(-1);
         for (int i = 0; i < count; i++) {
             for (int j = 0; j < 3; j++) {
                 long k = edgeKey(corner.of(i, (j + 1) % 3), corner.of(i, (j + 2) % 3));

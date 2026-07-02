@@ -6,6 +6,8 @@ import com.acme.triangle.Point;
 import com.acme.triangle.Triangle;
 import com.acme.triangle.TriangleMesherOutput2;
 import com.google.common.collect.ImmutableList;
+import it.unimi.dsi.fastutil.Hash;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayDeque;
@@ -51,15 +53,22 @@ final class IncrementalCdt {
     private final List<Segment> segments = new ArrayList<>();
     /* For each segment edge, one live incident triangle id - so the apexes that
        decide encroachment are an O(1) adjacency hop, not an O(T) edge->apex
-       rebuild. Maintained as the fan replaces incident triangles. Primitive maps:
-       the cavity gather probes an edge key per neighbour test, and boxed maps
-       there dominated the refinement profile. */
-    private final LongIntMap segTri = new LongIntMap(64);
+       rebuild. Maintained as the fan replaces incident triangles. Primitive maps
+       (get returns -1 when absent): the cavity gather probes an edge key per
+       neighbour test, and boxed maps there dominated the refinement profile. */
+    private final Long2IntOpenHashMap segTri = newEdgeMap();
     /* Each segment edge -> its index in `segments`, so an encroached subsegment
        found by edge can be split by index (splitting keeps the first half at its
        index). Its key set is exactly the current segment edges, so it doubles as
        the "is this edge a segment?" set for the cavity gather. */
-    private final LongIntMap segIndexByEdge = new LongIntMap(64);
+    private final Long2IntOpenHashMap segIndexByEdge = newEdgeMap();
+
+    private static Long2IntOpenHashMap newEdgeMap() {
+        Long2IntOpenHashMap m = new Long2IntOpenHashMap(64, Hash.FAST_LOAD_FACTOR);
+        m.defaultReturnValue(-1);
+        return m;
+    }
+
     /* Work queue of subsegments that may be encroached (segment indices) - a
        superset of the truly-encroached set, so emptying it proves none is
        encroached. Seeded with every subsegment, then refilled with the new fan's
@@ -143,7 +152,7 @@ final class IncrementalCdt {
             Triangle t = tris.get(i);
             for (int j = 0; j < 3; j++) {
                 long k = key(t.corner(j), t.corner((j + 1) % 3));
-                if (segIndexByEdge.contains(k)) {
+                if (segIndexByEdge.containsKey(k)) {
                     segTri.put(k, i);
                 }
             }
@@ -394,7 +403,7 @@ final class IncrementalCdt {
                 }
                 int u = tc.corner((j + 1) % 3);
                 int w = tc.corner((j + 2) % 3);
-                if (segIndexByEdge.contains(key(u, w))) {
+                if (segIndexByEdge.containsKey(key(u, w))) {
                     continue;                       /* never cross a segment */
                 }
                 if (inCircle(tris.get(nb), p)) {
@@ -472,7 +481,7 @@ final class IncrementalCdt {
             int id = allocSlot(new Triangle(u, w, pIdx, -1, -1, nb, f.attr));
             lastFan.add(id);
             long uw = key(u, w);
-            if (segIndexByEdge.contains(uw)) {              /* this fan tri now backs the segment */
+            if (segIndexByEdge.containsKey(uw)) {              /* this fan tri now backs the segment */
                 segTri.put(uw, id);
             }
             if (nb >= 0) {                                  /* repoint the outer ring */
