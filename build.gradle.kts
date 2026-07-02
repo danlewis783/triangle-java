@@ -61,6 +61,32 @@ tasks.register<JavaExec>("bench") {
     )
 }
 
+// Profiles the pure-Java mesher under Java Flight Recorder on the Java 8
+// toolchain: loops one scenario (no native runs, no harness noise) and dumps
+// build/jfr/<scenario>.jfr on exit. E.g.:
+//   ./gradlew profile --args="ref-rings-q33 30"
+// Inspect with a modern JDK's `jfr` tool (`jfr view hot-methods <file>`).
+tasks.register<JavaExec>("profile") {
+    group = "verification"
+    description = "Runs the java-mesher profiling loop under JFR (Java 8)."
+    mainClass.set("com.acme.triangle.bench.ProfileDriver")
+    classpath = sourceSets["bench"].runtimeClasspath
+    javaLauncher.set(
+        javaToolchains.launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(8))
+        }
+    )
+    doFirst {
+        val scenario = args?.firstOrNull() ?: "ref-rings-q33"
+        mkdir(layout.buildDirectory.dir("jfr"))
+        jvmArgs(
+            "-XX:FlightRecorderOptions=stackdepth=128",
+            "-XX:StartFlightRecording=settings=profile,dumponexit=true," +
+                "filename=build/jfr/$scenario.jfr"
+        )
+    }
+}
+
 // Statistically rigorous benchmarks via JMH (proper warmup, forks, variance).
 // The forked measurement JVM inherits this launcher, so we measure on Java 8 to
 // match the shipped artifact and the `bench` task above; bump the version here to
