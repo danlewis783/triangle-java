@@ -1,8 +1,6 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.Constraint;
-import com.acme.triangle.ImmutableTriangle;
-import com.google.common.collect.ImmutableList;
+import com.acme.triangle.TriangleMesherOutput;
 import it.unimi.dsi.fastutil.Hash;
 import it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -112,38 +110,34 @@ final class IncrementalCdt {
     private final double lensFactor;
 
     /** Diametral-circle encroachment (conservative; structural tests use this). */
-    IncrementalCdt(ModelledOutput base) {
+    IncrementalCdt(CdtResult base) {
         this(base, 45.0);           /* cos^2(45) = 0.5 makes the lens the circle */
     }
 
     /** Encroachment via Triangle's diametral lens for the given quality bound
         (the bound the refinement loop is meshing toward). */
-    IncrementalCdt(ModelledOutput base, double minAngleDegrees) {
+    IncrementalCdt(CdtResult base, double minAngleDegrees) {
         double g = Math.cos(Math.toRadians(minAngleDegrees));
         g = g * g;
         lensFactor = (2.0 * g - 1.0) * (2.0 * g - 1.0);
-        /* Adopt the modelled stores the CDT just built and handed over (it is a
-           transient, used by nobody else): the modelled point list seeds the
-           mesh's growable flat vertex store, and the triangles already carry
-           compacted neighbour links, so construction relinks nothing - no
-           from-scratch adjacency rebuild. */
-        points = FlatPointList.copyOf(base.getPoints());
+        /* Adopt the flat stores the CDT phase just built and handed over (they
+           are single-use transients): the vertex store keeps growing here, and
+           the compacted arena already carries its neighbour links, so
+           construction relinks nothing - no boundary copy, no adjacency
+           rebuild. */
+        points = base.points;
         for (int i = 0; i < points.size(); i++) {
             provenances.add(new Provenance(VertexType.INPUT, -1, -1));
         }
-        List<ImmutableTriangle> bt = base.getTriangles();
-        haveAttr = base.hasAttributes();
-        tris = new FlatTriangleList(bt.size());
-        for (ImmutableTriangle it : bt) {
-            tris.alloc(it.getA(), it.getB(), it.getC(),
-                    it.getN0(), it.getN1(), it.getN2(), it.getAttr());
-        }
+        haveAttr = base.hasAttributes;
+        tris = base.triangles;
         cavityGen = new int[Math.max(16, tris.slotCount())];
-        for (Constraint c : base.getSegments()) {
-            int idx = segments.size();
-            segments.add(new Segment(c.getA(), c.getB(), c.getMarker(), c.getA(), c.getB()));  /* original endpoints = a, b */
-            segIndexByEdge.put(key(c.getA(), c.getB()), idx);
-            encroachQueue.enqueue(idx);              /* seed: every subsegment is a candidate */
+        for (int s = 0; s < base.segmentMarkers.size(); s++) {
+            int a = base.segments.getInt(2 * s);
+            int b = base.segments.getInt(2 * s + 1);
+            segments.add(new Segment(a, b, base.segmentMarkers.getInt(s), a, b));  /* original endpoints = a, b */
+            segIndexByEdge.put(key(a, b), s);
+            encroachQueue.enqueue(s);                /* seed: every subsegment is a candidate */
         }
         for (int i = 0; i < tris.slotCount(); i++) {       /* seed segment->triangle */
             for (int j = 0; j < 3; j++) {
@@ -620,19 +614,29 @@ final class IncrementalCdt {
         return dot * dot >= lensFactor * (dax * dax + day * day) * (dbx * dbx + dby * dby);
     }
 
-    ModelledOutput toOutput() {
-        /* Drop dead slots and remap neighbour links to the compacted indexing. */
-        List<ImmutableTriangle> outTriangles = TriangleUtils.compact(tris);
+    /** Pack the refined mesh into the flat public output: live arena slots
+        compacted with the maintained adjacency, the current subsegments as the
+        segment chain. Fresh arrays throughout - the mesh keeps its own growable
+        stores rather than handing out its internals. */
+    TriangleMesherOutput toOutput() {
+        TriangleMesherOutput out = new TriangleMesherOutput();
+        out.numberOfPoints = points.size();
+        out.pointList = points.toArray();
+        TriangleUtils.writeTriangles(tris, haveAttr, out);
 
-        ImmutableList.Builder<Constraint> outSegments = ImmutableList.builderWithExpectedSize(segments.size());
-        for (Segment sg : segments) {
-            outSegments.add(new Constraint(sg.a, sg.b, sg.marker));
+        int s = segments.size();
+        int[] segList = new int[2 * s];
+        int[] markers = new int[s];
+        for (int i = 0; i < s; i++) {
+            Segment sg = segments.get(i);
+            segList[2 * i] = sg.a;
+            segList[2 * i + 1] = sg.b;
+            markers[i] = sg.marker;
         }
-
-        /* The flat store materialized to the modelled List<Point> form - the mesh
-           keeps its own growable store rather than handing out its internals. */
-        return new ModelledOutput(points.toPointList(), outTriangles,
-                outSegments.build(), haveAttr);
+        out.numberOfSegments = s;
+        out.segmentList = segList;
+        out.segmentMarkerList = markers;
+        return out;
     }
 
     /**

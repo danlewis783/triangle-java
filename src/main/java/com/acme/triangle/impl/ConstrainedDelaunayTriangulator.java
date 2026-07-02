@@ -1,10 +1,5 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.Constraint;
-import com.acme.triangle.DefaultImmutableTriangle;
-import com.acme.triangle.ImmutableTriangle;
-import com.acme.triangle.Point;
-import com.acme.triangle.Region;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import it.unimi.dsi.fastutil.Hash;
@@ -14,7 +9,6 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import org.jspecify.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -44,10 +38,12 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     public static TriangleMesherOutput triangulate(TriangleMesherInput in) {
-        return triangulate(ModelledInput.from(in)).toFlat();
+        return build(in).toOutput();
     }
 
-    static ModelledOutput triangulate(ModelledInput in) {
+    /** The pipeline over the flat internal stores; refinement adopts the result
+        directly, and the public entry above marshals it out. */
+    static CdtResult build(TriangleMesherInput in) {
         /* 1. Split crossing segments. */
         Pslg pslg = splitIntersections(in);
         FlatPointList pts = pslg.points;
@@ -58,14 +54,14 @@ public final class ConstrainedDelaunayTriangulator {
         /* 3-6. Recover segments, restore Delaunay, carve, attribute - all on the
            maintained-adjacency arena. */
         CdtMesh mesh = new CdtMesh(pts, tris);
-        for (Constraint s : pslg.segments) {
-            mesh.recoverSegment(s.getA(), s.getB());
+        for (int s = 0; s < pslg.segmentMarkers.size(); s++) {
+            mesh.recoverSegment(pslg.segments.getInt(2 * s), pslg.segments.getInt(2 * s + 1));
         }
         mesh.restoreDelaunay();
-        boolean[] removed = mesh.carve(in.getHoles());
-        double[] attr = mesh.attributeRegions(removed, in.getRegions());
+        boolean[] removed = mesh.carve(in.holeList, in.numberOfHoles);
+        double[] attr = mesh.attributeRegions(removed, in.regionList, in.numberOfRegions);
 
-        return mesh.buildOutput(removed, attr, pslg);
+        return mesh.result(removed, attr, pslg);
     }
 
     /* --- 1. segment intersection splitting ----------------------------------- */
@@ -82,19 +78,32 @@ public final class ConstrainedDelaunayTriangulator {
      */
     private static final class Pslg {
         final FlatPointList points;
-        final List<Constraint> segments;
+        final IntArrayList segments;          /* interleaved (a, b) per segment */
+        final IntArrayList segmentMarkers;    /* one marker per segment */
 
-        private Pslg(FlatPointList points, List<Constraint> segments) {
+        private Pslg(FlatPointList points, IntArrayList segments, IntArrayList segmentMarkers) {
             this.points = points;
             this.segments = segments;
+            this.segmentMarkers = segmentMarkers;
         }
     }
 
-    private static Pslg splitIntersections(ModelledInput in) {
-        /* Growable working copy: intersection points are appended as crossings
-           are resolved (the input store must not be mutated). */
-        FlatPointList pts = FlatPointList.copyOf(in.getPoints());
-        List<Constraint> segs = new ArrayList<>(in.getSegments());
+    private static Pslg splitIntersections(TriangleMesherInput in) {
+        /* Growable working copies: intersection points are appended as crossings
+           are resolved (the input arrays must not be mutated). Absent markers
+           default to 0. */
+        FlatPointList pts = FlatPointList.copyOf(in.pointList, in.numberOfPoints);
+        IntArrayList segs = new IntArrayList(2 * in.numberOfSegments);
+        IntArrayList markers = new IntArrayList(in.numberOfSegments);
+        int[] segList = in.segmentList;
+        int[] markerList = in.segmentMarkerList;
+        if (segList != null) {
+            for (int i = 0; i < in.numberOfSegments; i++) {
+                segs.add(segList[2 * i]);
+                segs.add(segList[2 * i + 1]);
+                markers.add(markerList != null ? markerList[i] : 0);
+            }
+        }
 
         /* (a) Two segments cross: split both at their intersection point, and
            rescan (rare; crossings only shrink). A crossing split cannot create a
@@ -106,26 +115,31 @@ public final class ConstrainedDelaunayTriangulator {
         boolean changed = true;
         while (changed) {
             changed = false;
-            double[] box = segmentBoxes(pts, segs);
+            double[] box = segmentBoxes(pts, segs, markers.size());
             crossings:
-            for (int i = 0; i < segs.size(); i++) {
-                for (int j = i + 1; j < segs.size(); j++) {
+            for (int i = 0; i < markers.size(); i++) {
+                for (int j = i + 1; j < markers.size(); j++) {
                     if (box[4 * i] > box[4 * j + 1] || box[4 * j] > box[4 * i + 1]
                             || box[4 * i + 2] > box[4 * j + 3] || box[4 * j + 2] > box[4 * i + 3]) {
                         continue;                   /* disjoint boxes cannot cross */
                     }
-                    Constraint a = segs.get(i);
-                    Constraint b = segs.get(j);
-                    if (share(a, b)) {
-                        continue;
+                    int aA = segs.getInt(2 * i);
+                    int aB = segs.getInt(2 * i + 1);
+                    int bA = segs.getInt(2 * j);
+                    int bB = segs.getInt(2 * j + 1);
+                    if (aA == bA || aA == bB || aB == bA || aB == bB) {
+                        continue;                   /* sharing an endpoint: no crossing */
                     }
-                    if (cross(pts, a.getA(), a.getB(), b.getA(), b.getB())) {
-                        Point intersection = intersection(pts, a.getA(), a.getB(), b.getA(), b.getB());
-                        int c = pts.add(intersection.getX(), intersection.getY());
-                        segs.set(i, new Constraint(a.getA(), c, a.getMarker()));
-                        segs.set(j, new Constraint(b.getA(), c, b.getMarker()));
-                        segs.add(new Constraint(c, a.getB(), a.getMarker()));
-                        segs.add(new Constraint(c, b.getB(), b.getMarker()));
+                    if (cross(pts, aA, aB, bA, bB)) {
+                        int c = addIntersection(pts, aA, aB, bA, bB);
+                        segs.set(2 * i + 1, c);                     /* (aA, c) */
+                        segs.set(2 * j + 1, c);                     /* (bA, c) */
+                        segs.add(c);
+                        segs.add(aB);
+                        markers.add(markers.getInt(i));
+                        segs.add(c);
+                        segs.add(bB);
+                        markers.add(markers.getInt(j));
                         changed = true;
                         break crossings;
                     }
@@ -142,17 +156,16 @@ public final class ConstrainedDelaunayTriangulator {
            segments against all V vertices after every single split - quadratic
            blow-up on lattice inputs whose boundary segments carry hundreds of
            collinear vertices.) */
-        int origSegs = segs.size();
-        double[] box = segmentBoxes(pts, segs);
+        int origSegs = markers.size();
+        double[] box = segmentBoxes(pts, segs, origSegs);
         for (int i = 0; i < origSegs; i++) {
-            Constraint s = segs.get(i);
-            int a = s.getA();
-            int b = s.getB();
+            int a = segs.getInt(2 * i);
+            int b = segs.getInt(2 * i + 1);
             double ax = pts.x(a);
             double ay = pts.y(a);
             double abx = pts.x(b) - ax;
             double aby = pts.y(b) - ay;
-            List<Integer> chain = null;
+            IntArrayList chain = null;
             for (int v = 0; v < pts.size(); v++) {
                 if (pts.x(v) < box[4 * i] || pts.x(v) > box[4 * i + 1]
                         || pts.y(v) < box[4 * i + 2] || pts.y(v) > box[4 * i + 3]) {
@@ -160,7 +173,7 @@ public final class ConstrainedDelaunayTriangulator {
                 }
                 if (v != a && v != b && onSegmentInterior(pts, a, b, v)) {
                     if (chain == null) {
-                        chain = new ArrayList<>();
+                        chain = new IntArrayList();
                     }
                     chain.add(v);
                 }
@@ -170,33 +183,36 @@ public final class ConstrainedDelaunayTriangulator {
             }
             /* Order by the projection along a->b (all collinear, so this is the
                true order along the segment). */
-            chain.sort(Comparator.comparingDouble(
-                    v -> (pts.x(v) - ax) * abx + (pts.y(v) - ay) * aby));
+            chain.sort((u, v) -> Double.compare(
+                    (pts.x(u) - ax) * abx + (pts.y(u) - ay) * aby,
+                    (pts.x(v) - ax) * abx + (pts.y(v) - ay) * aby));
+            int marker = markers.getInt(i);
             int prev = a;
-            for (int v : chain) {
+            for (int k = 0; k < chain.size(); k++) {
+                int v = chain.getInt(k);
                 if (prev == a) {
-                    segs.set(i, new Constraint(a, v, s.getMarker()));
+                    segs.set(2 * i + 1, v);         /* first chunk keeps index i */
                 } else {
-                    segs.add(new Constraint(prev, v, s.getMarker()));
+                    segs.add(prev);
+                    segs.add(v);
+                    markers.add(marker);
                 }
                 prev = v;
             }
-            segs.add(new Constraint(prev, b, s.getMarker()));
+            segs.add(prev);
+            segs.add(b);
+            markers.add(marker);
         }
 
-        return new Pslg(pts, segs);
-    }
-
-    private static boolean share(Constraint a, Constraint b) {
-        return a.getA() == b.getA() || a.getA() == b.getB() || a.getB() == b.getA() || a.getB() == b.getB();
+        return new Pslg(pts, segs, markers);
     }
 
     /** Closed bounding boxes per segment: {minX, maxX, minY, maxY} at 4i. */
-    private static double[] segmentBoxes(FlatPointList pts, List<Constraint> segs) {
-        double[] box = new double[4 * segs.size()];
-        for (int i = 0; i < segs.size(); i++) {
-            int a = segs.get(i).getA();
-            int b = segs.get(i).getB();
+    private static double[] segmentBoxes(FlatPointList pts, IntArrayList segs, int count) {
+        double[] box = new double[4 * count];
+        for (int i = 0; i < count; i++) {
+            int a = segs.getInt(2 * i);
+            int b = segs.getInt(2 * i + 1);
             box[4 * i] = Math.min(pts.x(a), pts.x(b));
             box[4 * i + 1] = Math.max(pts.x(a), pts.x(b));
             box[4 * i + 2] = Math.min(pts.y(a), pts.y(b));
@@ -221,7 +237,9 @@ public final class ConstrainedDelaunayTriangulator {
         return toA > 0 && toB > 0;            /* strictly inside, not at an endpoint */
     }
 
-    private static Point intersection(FlatPointList pts, int p0, int p1, int q0, int q1) {
+    /** Append the intersection point of segments (p0, p1) and (q0, q1); returns
+        its new vertex index. */
+    private static int addIntersection(FlatPointList pts, int p0, int p1, int q0, int q1) {
         double x1 = pts.x(p0);
         double y1 = pts.y(p0);
         double x2 = pts.x(p1);
@@ -233,7 +251,7 @@ public final class ConstrainedDelaunayTriangulator {
 
         double den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
         double t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
-        return new Point(x1 + t * (x2 - x1), y1 + t * (y2 - y1));
+        return pts.add(x1 + t * (x2 - x1), y1 + t * (y2 - y1));
     }
 
     /* --- 3-6. constrained mesh on a maintained-adjacency arena --------------- */
@@ -589,7 +607,7 @@ public final class ConstrainedDelaunayTriangulator {
             return segSet.contains(key(cor[3 * t + (j + 1) % 3], cor[3 * t + (j + 2) % 3]));
         }
 
-        boolean[] carve(List<Point> holes) {
+        boolean[] carve(double @Nullable [] holeList, int numberOfHoles) {
             boolean[] removed = new boolean[nt];
             IntArrayFIFOQueue queue = new IntArrayFIFOQueue();
 
@@ -603,11 +621,13 @@ public final class ConstrainedDelaunayTriangulator {
                 }
             }
             /* Seed: triangle containing each hole point. */
-            for (Point h : holes) {
-                int t = locate(h.getX(), h.getY());
-                if (t >= 0 && !removed[t]) {
-                    removed[t] = true;
-                    queue.enqueue(t);
+            if (holeList != null) {
+                for (int h = 0; h < numberOfHoles; h++) {
+                    int t = locate(holeList[2 * h], holeList[2 * h + 1]);
+                    if (t >= 0 && !removed[t]) {
+                        removed[t] = true;
+                        queue.enqueue(t);
+                    }
                 }
             }
             while (!queue.isEmpty()) {
@@ -623,23 +643,26 @@ public final class ConstrainedDelaunayTriangulator {
             return removed;
         }
 
-        double @Nullable [] attributeRegions(boolean[] removed, List<Region> regions) {
-            if (regions.isEmpty()) {
+        double @Nullable [] attributeRegions(boolean[] removed,
+                                             double @Nullable [] regionList,
+                                             int numberOfRegions) {
+            if (regionList == null || numberOfRegions == 0) {
                 return null;
             }
             double[] attr = new double[nt];
-            for (Region region : regions) {
-                int start = locate(region.getSite().getX(), region.getSite().getY());
+            for (int r = 0; r < numberOfRegions; r++) {
+                int start = locate(regionList[4 * r], regionList[4 * r + 1]);
                 if (start < 0 || removed[start]) {
                     continue;
                 }
+                double attribute = regionList[4 * r + 2];
                 IntArrayFIFOQueue queue = new IntArrayFIFOQueue();
                 boolean[] seen = new boolean[nt];
                 seen[start] = true;
                 queue.enqueue(start);
                 while (!queue.isEmpty()) {
                     int t = queue.dequeueInt();
-                    attr[t] = region.getAttribute();
+                    attr[t] = attribute;
                     for (int j = 0; j < 3; j++) {
                         int nb = nbr[3 * t + j];
                         if (nb >= 0 && !removed[nb] && !seen[nb] && !isSegmentEdge(t, j)) {
@@ -670,24 +693,35 @@ public final class ConstrainedDelaunayTriangulator {
 
         /* --- output ---------------------------------------------------------- */
 
-        ModelledOutput buildOutput(boolean[] removed, double @Nullable [] attr, Pslg pslg) {
-            /* One cell per slot, null where carved away, each carrying its neighbour
-               ids in slot indexing; TriangleUtils.compact drops the dead slots and
-               remaps the neighbours (a neighbour pointing at a carved slot collapses
-               to a boundary, since that slot's remap entry stays -1). */
-            List<@Nullable ImmutableTriangle> slots = new ArrayList<>(nt);
+        /**
+         * Pack the surviving triangles into a fresh compacted arena and hand it
+         * over with the point store and recovered subsegments (all adopted
+         * directly - the PSLG and this mesh are single-use). Neighbour ids are
+         * remapped from this mesh's slot indexing to the compacted arena's; a
+         * neighbour pointing at a carved slot collapses to a boundary (-1).
+         */
+        CdtResult result(boolean[] removed, double @Nullable [] attr, Pslg pslg) {
+            int[] remap = new int[nt];
+            int live = 0;
             for (int i = 0; i < nt; i++) {
-                slots.add(removed[i] ? null : new DefaultImmutableTriangle(
-                        cor[3 * i], cor[3 * i + 1], cor[3 * i + 2],
-                        nbr[3 * i], nbr[3 * i + 1], nbr[3 * i + 2],
-                        attr != null ? attr[i] : 0.0));
+                remap[i] = removed[i] ? -1 : live++;
             }
+            FlatTriangleList out = new FlatTriangleList(live);
+            for (int i = 0; i < nt; i++) {
+                if (removed[i]) {
+                    continue;
+                }
+                out.alloc(cor[3 * i], cor[3 * i + 1], cor[3 * i + 2],
+                        mapNbr(nbr[3 * i], remap), mapNbr(nbr[3 * i + 1], remap),
+                        mapNbr(nbr[3 * i + 2], remap),
+                        attr != null ? attr[i] : 0.0);
+            }
+            return new CdtResult(pslg.points, out, pslg.segments, pslg.segmentMarkers,
+                    attr != null);
+        }
 
-            /* The flat point store is materialized to the modelled List<Point> form
-               here, at the phase boundary; the recovered subsegment list is adopted
-               directly (the PSLG is single-use). */
-            return new ModelledOutput(pslg.points.toPointList(),
-                    TriangleUtils.compact(slots), pslg.segments, attr != null);
+        private static int mapNbr(int nb, int[] remap) {
+            return nb < 0 ? -1 : remap[nb];
         }
     }
 

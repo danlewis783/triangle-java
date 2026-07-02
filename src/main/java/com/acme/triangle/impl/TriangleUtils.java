@@ -1,22 +1,19 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.DefaultImmutableTriangle;
-import com.acme.triangle.ImmutableTriangle;
-import com.google.common.collect.ImmutableList;
-import org.jspecify.annotations.Nullable;
+import com.acme.triangle.TriangleMesherOutput;
 import java.util.Arrays;
-import java.util.List;
 
 /**
- * Packs a slot-indexed triangle list - some slots dead ({@code null}) - into a
- * compacted {@link ImmutableTriangle} list: drops the dead slots and remaps every
- * neighbour id from slot index to the contiguous output index. The shared tail of
- * both the constrained-Delaunay build ({@link ConstrainedDelaunayTriangulator})
- * and the refinement output ({@link IncrementalCdt}).
+ * Emits a triangle arena into the flat public output form: drops dead slots and
+ * remaps every neighbour id from slot indexing to the compacted output
+ * indexing. The shared output tail of both the constrained-Delaunay build
+ * ({@link CdtResult#toOutput}) and the refinement mesh
+ * ({@code IncrementalCdt.toOutput}).
  * <p>
  * A dead slot's remap entry stays -1, so a neighbour that points at one - a
- * carved-away slot in the build, never a live triangle's neighbour in refinement -
- * collapses to a boundary (-1) for free, which is why both callers can share this.
+ * carved-away slot in the build, never a live triangle's neighbour in
+ * refinement - collapses to a boundary (-1) for free, which is why both callers
+ * can share this.
  */
 final class TriangleUtils {
 
@@ -24,12 +21,13 @@ final class TriangleUtils {
     }
 
     /**
-     * @param tris the triangle arena, each live slot carrying neighbour ids in
-     *             <em>slot</em> indexing
-     * @return the live triangles in slot order, neighbour ids remapped to the
-     *         compacted output indexing (dead neighbours become a boundary, -1)
+     * Fill {@code out}'s triangle fields ({@code numberOfTriangles},
+     * {@code triangleList}, {@code neighborList}, and - when {@code hasAttr} -
+     * {@code triangleAttributeList}) with {@code tris}'s live slots in slot
+     * order, neighbour ids remapped to the compacted indexing.
      */
-    static ImmutableList<ImmutableTriangle> compact(FlatTriangleList tris) {
+    static void writeTriangles(FlatTriangleList tris, boolean hasAttr,
+                               TriangleMesherOutput out) {
         int[] remap = new int[tris.slotCount()];
         Arrays.fill(remap, -1);
         int n = 0;
@@ -38,51 +36,29 @@ final class TriangleUtils {
                 remap[i] = n++;
             }
         }
-        ImmutableList.Builder<ImmutableTriangle> packed = ImmutableList.builderWithExpectedSize(n);
+        int[] corners = new int[3 * n];
+        int[] neighbors = new int[3 * n];
+        double[] attrs = hasAttr ? new double[n] : null;
+        int k = 0;
         for (int i = 0; i < tris.slotCount(); i++) {
             if (!tris.isLive(i)) {
                 continue;
             }
-            packed.add(new DefaultImmutableTriangle(tris.a(i), tris.b(i), tris.c(i),
-                    mapNbr(tris.neighbor(i, 0), remap), mapNbr(tris.neighbor(i, 1), remap),
-                    mapNbr(tris.neighbor(i, 2), remap), tris.attr(i)));
-        }
-        return packed.build();
-    }
-
-    /**
-     * @param slots one cell per slot, {@code null} for a dead/removed slot, each
-     *              triangle carrying neighbour ids in <em>slot</em> indexing
-     * @return the live triangles in slot order, neighbour ids remapped to the
-     *         compacted output indexing (dead neighbours become a boundary, -1)
-     */
-    static ImmutableList<ImmutableTriangle> compact(List<? extends @Nullable ImmutableTriangle> slots) {
-        int[] remap = new int[slots.size()];
-        Arrays.fill(remap, -1);
-        int n = 0;
-        for (int i = 0; i < slots.size(); i++) {
-            if (slots.get(i) != null) {
-                remap[i] = n++;
+            corners[3 * k] = tris.a(i);
+            corners[3 * k + 1] = tris.b(i);
+            corners[3 * k + 2] = tris.c(i);
+            for (int j = 0; j < 3; j++) {
+                int nb = tris.neighbor(i, j);
+                neighbors[3 * k + j] = nb < 0 ? -1 : remap[nb];
             }
-        }
-        ImmutableList.Builder<ImmutableTriangle> packed = ImmutableList.builderWithExpectedSize(n);
-        for (ImmutableTriangle t : slots) {
-            if (t == null) {
-                continue;
+            if (attrs != null) {
+                attrs[k] = tris.attr(i);
             }
-            packed.add(new DefaultImmutableTriangle(t.getA(), t.getB(), t.getC(),
-                    mapNbr(t.getN0(), remap), mapNbr(t.getN1(), remap), mapNbr(t.getN2(), remap),
-                    t.getAttr()));
+            k++;
         }
-        return packed.build();
-    }
-
-    /**
-     * A neighbour slot id mapped to its compacted output index, or -1 for a
-     * boundary ({@code nb < 0}) or a neighbour pointing at a dead slot (whose
-     * remap entry stayed -1).
-     */
-    private static int mapNbr(int nb, int[] remap) {
-        return nb < 0 ? -1 : remap[nb];
+        out.numberOfTriangles = n;
+        out.triangleList = corners;
+        out.neighborList = neighbors;
+        out.triangleAttributeList = attrs;
     }
 }

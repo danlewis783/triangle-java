@@ -24,9 +24,12 @@ One interface, one factory, flat DTOs:
 - `io.TriangleJson` — the JSON form of the input DTO; every capture and
   regression fixture is one of these documents.
 
-Everything else lives in `impl` and may change freely, including the modelled
-working types (`ModelledInput`/`ModelledOutput`) the pipeline runs on — the
-flat-to-modelled conversion happens exactly once, at the `mesh()` boundary.
+Everything else lives in `impl` and may change freely. The pipeline is
+flat-native front to back: the phases hand each other the internal flat stores
+directly (`CdtResult` carries the vertex store, the compacted triangle arena,
+and the recovered subsegments from construction into refinement, adopted
+without copying), and the only conversions are reading the input DTO's arrays
+at the front and writing the output DTO's arrays at the back.
 
 ## The pipeline (pure-Java mesher)
 
@@ -53,12 +56,12 @@ flat-to-modelled conversion happens exactly once, at the `mesh()` boundary.
 Internal representations: vertices in `FlatPointList` (append-only interleaved
 `double[]`), triangles in `FlatTriangleList` (slot arena carrying corners,
 neighbour links, region attribute, and liveness; corners fixed at alloc,
-neighbour links the one mutable facet). Geometric truth comes from
+neighbour links the one mutable facet), segments and all other dynamic
+collections in fastutil primitive lists. Geometric truth comes from
 `predicate.Predicates` — exact-sign orient2d/incircle behind a fast filter —
-reached only through `impl.Geometry`. Dynamic collections are fastutil; the
-one hand-rolled idiom is generation-stamped scratch arrays (membership valid
-iff stamp equals the current generation), which is an algorithm, not a
-container.
+reached only through `impl.Geometry`. The one hand-rolled idiom is
+generation-stamped scratch arrays (membership valid iff stamp equals the
+current generation), which is an algorithm, not a container.
 
 ## The contracts (how correctness is defined)
 

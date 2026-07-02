@@ -1,6 +1,5 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.PointUtils;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.contract.MeshValidator;
@@ -35,7 +34,8 @@ class DelaunayTriangulatorTest {
         for (Scenario s : ScenarioFixtures.all()) {
             tests.add(dynamicTest(s.name, () -> {
                 TriangleMesherInput in = s.input;
-                List<Corners> tris = DelaunayTriangulator.triangulate(PointUtils.toImmutableList(in.numberOfPoints, in.pointList));
+                List<Corners> tris = DelaunayTriangulator.triangulate(
+                        FlatPointList.copyOf(in.pointList, in.numberOfPoints));
                 TriangleMesherOutput o = toFlatMesh(in.pointList, in.numberOfPoints, tris);
                 assertThat(o.numberOfTriangles)
                         .as("%s produced triangles", s.name).isGreaterThan(0);

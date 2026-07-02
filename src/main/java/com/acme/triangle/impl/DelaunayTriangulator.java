@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import com.acme.triangle.Point;
 import com.acme.triangle.predicate.Predicates;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 
@@ -38,11 +37,6 @@ public final class DelaunayTriangulator {
      * @return the Delaunay triangles as CCW {@link Corners} over the input
      *         points (a fresh, mutable list the caller may refine in place)
      */
-    public static List<Corners> triangulate(List<Point> points) {
-        return triangulate(FlatPointList.copyOf(points));
-    }
-
-    /** {@link #triangulate(List)} over the mesher's internal flat vertex store. */
     static List<Corners> triangulate(FlatPointList points) {
         if (points.size() < 3) {
             throw new IllegalArgumentException("need at least 3 points");

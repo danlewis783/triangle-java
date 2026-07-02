@@ -1,19 +1,15 @@
 package com.acme.triangle.impl;
 
-import com.acme.triangle.Point;
-import com.google.common.collect.ImmutableList;
-
 import java.util.Arrays;
-import java.util.List;
 
 /**
  * Flat, append-only vertex store: coordinates interleaved in a growable
  * {@code double[]} (vertex {@code i} at {@code 2i}/{@code 2i+1}) - the
- * representation every hot geometric test wants, one array read instead of a
- * {@code List} dereference plus two field loads per corner. This is the
- * mesher's internal vertex form; the public API keeps {@code List<Point>}, and
- * conversion happens only at phase boundaries ({@link #copyOf} in,
- * {@link #toPointList} out).
+ * representation every hot geometric test wants, one array read instead of an
+ * object dereference plus two field loads per corner. This is the mesher's
+ * internal vertex form; conversion to and from the public DTO's interleaved
+ * arrays happens only at phase boundaries ({@link #copyOf} in,
+ * {@link #toArray} out).
  * <p>
  * As immutable as meshing allows: a coordinate is never modified once added
  * (refinement only <em>appends</em> Steiner vertices), and the backing array is
@@ -28,12 +24,12 @@ final class FlatPointList {
         xy = new double[Math.max(8, 2 * expectedPoints)];
     }
 
-    /** A flat copy of {@code points} (the boundary conversion inward). */
-    static FlatPointList copyOf(List<Point> points) {
-        FlatPointList flat = new FlatPointList(points.size());
-        for (Point p : points) {
-            flat.add(p.getX(), p.getY());
-        }
+    /** A flat copy of the first {@code n} points of the interleaved
+        {@code x0,y0,x1,y1,...} array (the boundary conversion inward). */
+    static FlatPointList copyOf(double[] interleaved, int n) {
+        FlatPointList flat = new FlatPointList(n);
+        System.arraycopy(interleaved, 0, flat.xy, 0, 2 * n);
+        flat.size = n;
         return flat;
     }
 
@@ -66,13 +62,9 @@ final class FlatPointList {
         return dx * dx + dy * dy;
     }
 
-    /** The store in the public {@code List<Point>} form (a fresh immutable copy;
-        the boundary conversion outward). */
-    ImmutableList<Point> toPointList() {
-        ImmutableList.Builder<Point> out = ImmutableList.builderWithExpectedSize(size);
-        for (int i = 0; i < size; i++) {
-            out.add(new Point(x(i), y(i)));
-        }
-        return out.build();
+    /** The store as a tight interleaved {@code x0,y0,x1,y1,...} array (a fresh
+        copy; the boundary conversion outward). */
+    double[] toArray() {
+        return Arrays.copyOf(xy, 2 * size);
     }
 }
