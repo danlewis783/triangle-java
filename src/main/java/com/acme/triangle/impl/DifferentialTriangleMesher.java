@@ -39,7 +39,11 @@ public final class DifferentialTriangleMesher implements TriangleMesher {
         List<String> primaryViolations = MeshValidator.validate(primaryOut, input);
         if (!primaryViolations.isEmpty()) {
             List<String> referenceViolations = MeshValidator.validate(referenceOut, input);
-            handler.onContractDivergence(input, primaryViolations, referenceViolations);
+            try {
+                handler.onContractDivergence(input, primaryViolations, referenceViolations);
+            } catch (RuntimeException e) {
+                throw FailureCapture.annotate(input, e);   /* strict mode: dump the repro */
+            }
         }
         return primaryOut;
     }

@@ -57,8 +57,12 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
-        InputValidator.requireValid(input);
-        return mesh(ModelledInput.from(input)).toFlat();
+        try {
+            InputValidator.requireValid(input);
+            return mesh(ModelledInput.from(input)).toFlat();
+        } catch (RuntimeException e) {
+            throw FailureCapture.annotate(input, e);   /* dump the repro, then rethrow */
+        }
     }
 
     /** The pipeline over the modelled form; conversion happens only at the

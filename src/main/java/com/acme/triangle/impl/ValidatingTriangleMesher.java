@@ -26,8 +26,8 @@ public final class ValidatingTriangleMesher implements TriangleMesher {
         TriangleMesherOutput out = delegate.mesh(input);
         List<String> violations = MeshValidator.validate(out, input);
         if (!violations.isEmpty()) {
-            throw new MeshContractException("mesh violates the structural contract",
-                    violations);
+            throw FailureCapture.annotate(input, new MeshContractException(
+                    "mesh violates the structural contract", violations));
         }
         return out;
     }

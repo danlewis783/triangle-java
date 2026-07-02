@@ -51,6 +51,13 @@ testing {
     }
 }
 
+// Failure capture is on by default for consumers; the suite exercises failing
+// paths constantly, so keep it quiet here. FailureCaptureTest re-enables it
+// against a temp directory to test the capture itself.
+tasks.withType<Test>().configureEach {
+    systemProperty("triangle.captureFailures", "false")
+}
+
 tasks.register<JavaExec>("bench") {
     group = "verification"
     description = "Runs the mesher micro-benchmark (Java vs native)."

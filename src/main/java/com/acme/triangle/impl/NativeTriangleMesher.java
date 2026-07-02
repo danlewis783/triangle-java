@@ -30,7 +30,11 @@ public final class NativeTriangleMesher implements TriangleMesher {
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
         /* Fail fast on a malformed DTO: native Triangle aborts the whole process
            on a fatal input error, so nothing structurally broken may reach it. */
-        InputValidator.requireValid(input);
+        try {
+            InputValidator.requireValid(input);
+        } catch (RuntimeException e) {
+            throw FailureCapture.annotate(input, e);   /* dump the repro, then rethrow */
+        }
         TriangulateIO in = new TriangulateIO();
         TriangulateIO out = new TriangulateIO();
         List<Memory> owned = new ArrayList<>();
