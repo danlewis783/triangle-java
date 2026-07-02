@@ -3,6 +3,7 @@ package com.acme.triangle.impl;
 import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
+import com.acme.triangle.contract.InputValidator;
 import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
 import java.util.ArrayList;
@@ -27,6 +28,9 @@ public final class NativeTriangleMesher implements TriangleMesher {
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
+        /* Fail fast on a malformed DTO: native Triangle aborts the whole process
+           on a fatal input error, so nothing structurally broken may reach it. */
+        InputValidator.requireValid(input);
         TriangulateIO in = new TriangulateIO();
         TriangulateIO out = new TriangulateIO();
         List<Memory> owned = new ArrayList<>();

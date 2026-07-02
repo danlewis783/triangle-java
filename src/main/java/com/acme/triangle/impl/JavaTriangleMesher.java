@@ -6,6 +6,7 @@ import com.acme.triangle.Region;
 import com.acme.triangle.TriangleMesher;
 import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.TriangleMesherOutput;
+import com.acme.triangle.contract.InputValidator;
 
 import it.unimi.dsi.fastutil.ints.IntList;
 import org.jspecify.annotations.Nullable;
@@ -56,6 +57,7 @@ public final class JavaTriangleMesher implements TriangleMesher {
 
     @Override
     public TriangleMesherOutput mesh(TriangleMesherInput input) {
+        InputValidator.requireValid(input);
         return mesh(ModelledInput.from(input)).toFlat();
     }
 
