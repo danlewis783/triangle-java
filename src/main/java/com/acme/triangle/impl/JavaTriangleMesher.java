@@ -113,11 +113,11 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         int maxVertices = Math.max(input.getPoints().size() * MAX_VERTEX_FACTOR, MIN_VERTEX_CAP);
         while (true) {
             /* Live views, re-fetched each iteration: with maintained adjacency
-               these are stable lists mutated in place (dead triangles appear as
+               these are stable stores mutated in place (dead triangles appear as
                null, so the scans skip them). A mutation may free/reuse slots, so a
                triangle index is only valid until the next split/insert. */
             List<Triangle> tris = mesh.trianglesView();
-            List<Point> points = mesh.pointsView();
+            FlatPointList points = mesh.points();
 
             /* Ruppert: clear every encroached subsegment before any bad triangle.
                The mesh maintains the encroached candidates incrementally, so this
@@ -138,7 +138,8 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
                    cavity gather, so if the off-centre would encroach a subsegment it
                    is not inserted and that subsegment is returned to split instead -
                    O(cavity), not an O(S) scan of every subsegment. */
-                int encroached = mesh.insertInteriorOrEncroachedSegment(centre, t);
+                int encroached = mesh.insertInteriorOrEncroachedSegment(
+                        centre.getX(), centre.getY(), t);
                 if (encroached >= 0) {
                     mesh.splitSegment(encroached);
                     enqueueFan(bad, mesh, cosSqBound, areaBounds);
@@ -307,26 +308,24 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         if (tc == null) {
             return;
         }
-        List<Point> points = mesh.pointsView();
+        FlatPointList points = mesh.points();
         int ia = tc.getA();
         int ib = tc.getB();
         int ic = tc.getC();
-        Point a = points.get(ia);
-        Point b = points.get(ib);
-        Point c = points.get(ic);
         boolean isBad = false;
         if (!areaBounds.isEmpty() && mesh.hasAttributes()) {
             double maxArea = areaBounds.boundFor(tc.getAttr());
-            isBad = maxArea > 0 && triangleArea(a, b, c) > maxArea;
+            isBad = maxArea > 0 && triangleArea(points, ia, ib, ic) > maxArea;
         }
         if (!isBad) {
-            isBad = belowAngleBound(a, b, c, cosSqBound)
+            isBad = belowAngleBound(points, ia, ib, ic, cosSqBound)
                     && !unsplittable(mesh, points, ia, ib, ic);
         }
         if (!isBad) {
             return;
         }
-        double key = Math.min(dist2(a, b), Math.min(dist2(b, c), dist2(c, a)));
+        double key = Math.min(points.dist2(ia, ib),
+                Math.min(points.dist2(ib, ic), points.dist2(ic, ia)));
         bad.add(new BadTri(id, ia, ib, ic, key));
     }
 
@@ -369,11 +368,11 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
      * (triangle.c:4036). The smallest angle is opposite the shortest edge and is
      * always acute, so the squared comparison is exact in sign.
      */
-    private static boolean belowAngleBound(Point a, Point b, Point c,
+    private static boolean belowAngleBound(FlatPointList pts, int a, int b, int c,
                                            double cosSqBound) {
-        double dxod = b.getX() - a.getX(), dyod = b.getY() - a.getY();
-        double dxda = c.getX() - b.getX(), dyda = c.getY() - b.getY();
-        double dxao = c.getX() - a.getX(), dyao = c.getY() - a.getY();
+        double dxod = pts.x(b) - pts.x(a), dyod = pts.y(b) - pts.y(a);
+        double dxda = pts.x(c) - pts.x(b), dyda = pts.y(c) - pts.y(b);
+        double dxao = pts.x(c) - pts.x(a), dyao = pts.y(c) - pts.y(a);
         double apexlen = dxod * dxod + dyod * dyod;        /* |a-b|^2, opposite c */
         double orglen = dxda * dxda + dyda * dyda;          /* |b-c|^2, opposite a */
         double destlen = dxao * dxao + dyao * dyao;         /* |a-c|^2, opposite b */
@@ -403,11 +402,11 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
      * concentric-shell segment splitting in {@link IncrementalCdt} is what makes
      * the endpoints land equidistant so this rule can recognize them.
      */
-    private static boolean unsplittable(IncrementalCdt cdt, List<Point> points,
+    private static boolean unsplittable(IncrementalCdt cdt, FlatPointList points,
                                         int ia, int ib, int ic) {
-        double ab = dist2(points, ia, ib);
-        double bc = dist2(points, ib, ic);
-        double ca = dist2(points, ic, ia);
+        double ab = points.dist2(ia, ib);
+        double bc = points.dist2(ib, ic);
+        double ca = points.dist2(ic, ia);
         int b1, b2;                                         /* shortest-edge endpoints */
         if (ab <= bc && ab <= ca) {
             b1 = ia; b2 = ib;
@@ -434,14 +433,14 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         if (join < 0) {
             return false;                          /* the two segments do not meet */
         }
-        double d1 = dist2(points, b1, join);
-        double d2 = dist2(points, b2, join);
+        double d1 = points.dist2(b1, join);
+        double d2 = points.dist2(b2, join);
         return d1 < 1.001 * d2 && d1 > 0.999 * d2;
     }
 
-    private static double triangleArea(Point a, Point b, Point c) {
-        return Math.abs((b.getX() - a.getX()) * (c.getY() - a.getY()) - (b.getY() - a.getY()) * (c.getX() - a.getX()))
-                / 2.0;
+    private static double triangleArea(FlatPointList pts, int a, int b, int c) {
+        return Math.abs((pts.x(b) - pts.x(a)) * (pts.y(c) - pts.y(a))
+                - (pts.y(b) - pts.y(a)) * (pts.x(c) - pts.x(a))) / 2.0;
     }
 
     /**
@@ -453,29 +452,29 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
      * is numerically unreliable for skinny triangles). Aims a small margin above
      * the bound so the new triangle is not re-selected at exactly the threshold.
      */
-    private static Point offCentre(List<Triangle> tris, List<Point> points,
+    private static Point offCentre(List<Triangle> tris, FlatPointList points,
                                    int t, double boundDegrees) {
         Triangle tc = tris.get(t);
-        Point a = points.get(tc.getA());
-        Point b = points.get(tc.getB());
-        Point c = points.get(tc.getC());
+        int ia = tc.getA();
+        int ib = tc.getB();
+        int ic = tc.getC();
 
         //p,q = shortest edge; r = apex
-        Point p;
-        Point q;
-        Point r;
-        double ab = dist2(a, b), bc = dist2(b, c), ca = dist2(c, a);
+        int p;
+        int q;
+        int r;
+        double ab = points.dist2(ia, ib), bc = points.dist2(ib, ic), ca = points.dist2(ic, ia);
         if (ab <= bc && ab <= ca) {
-            p = a; q = b; r = c;
+            p = ia; q = ib; r = ic;
         } else if (bc <= ab && bc <= ca) {
-            p = b; q = c; r = a;
+            p = ib; q = ic; r = ia;
         } else {
-            p = c; q = a; r = b;
+            p = ic; q = ia; r = ib;
         }
 
-        double e = Math.sqrt(dist2(p, q));
-        double mx = (p.getX() + q.getX()) / 2.0, my = (p.getY() + q.getY()) / 2.0;
-        double nx = -(q.getY() - p.getY()), ny = q.getX() - p.getX();       /* perpendicular to pq */
+        double e = Math.sqrt(points.dist2(p, q));
+        double mx = (points.x(p) + points.x(q)) / 2.0, my = (points.y(p) + points.y(q)) / 2.0;
+        double nx = -(points.y(q) - points.y(p)), ny = points.x(q) - points.x(p);   /* perpendicular to pq */
         /* sqrt, not Math.hypot: hypot's overflow guard made these two calls ~90%
            of refinement time (JMH stack profile), like the old acos cost. */
         double nlen = Math.sqrt(nx * nx + ny * ny);
@@ -484,7 +483,7 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         }
         nx /= nlen;
         ny /= nlen;
-        if ((r.getX() - mx) * nx + (r.getY() - my) * ny < 0) {    /* orient toward apex */
+        if ((points.x(r) - mx) * nx + (points.y(r) - my) * ny < 0) {  /* orient toward apex */
             nx = -nx;
             ny = -ny;
         }
@@ -510,37 +509,15 @@ public final class JavaTriangleMesher implements TriangleMesher, TriangleMesher2
         return new Point(mx + h * nx, my + h * ny);
     }
 
-    private static double dist2(Point a, Point b) {
-        double ax = a.getX();
-        double ay = a.getY();
-
-        double bx = b.getX();
-        double by = b.getY();
-
-        double dx = ax - bx;
-        double dy = ay - by;
-
-        return dx * dx + dy * dy;
-    }
-
-    private static double dist2(List<Point> points, int a, int b) {
-        return dist2(points.get(a), points.get(b));
-    }
-
-    private static Point circumcentre(List<Triangle> tris, List<Point> points, int t) {
+    private static Point circumcentre(List<Triangle> tris, FlatPointList points, int t) {
         Triangle triangle = tris.get(t);
 
-        Point pointA = points.get(triangle.getA());
-        double ax = pointA.getX();
-        double ay = pointA.getY();
-
-        Point pointB = points.get(triangle.getB());
-        double bx = pointB.getX();
-        double by = pointB.getY();
-
-        Point pointC = points.get(triangle.getC());
-        double cx = pointC.getX();
-        double cy = pointC.getY();
+        double ax = points.x(triangle.getA());
+        double ay = points.y(triangle.getA());
+        double bx = points.x(triangle.getB());
+        double by = points.y(triangle.getB());
+        double cx = points.x(triangle.getC());
+        double cy = points.y(triangle.getC());
 
         double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
         double a2 = ax * ax + ay * ay;

@@ -52,7 +52,7 @@ public final class ConstrainedDelaunayTriangulator {
     static TriangleMesherOutput2 triangulate(TriangleMesherInput2 in) {
         /* 1. Split crossing segments. */
         Pslg pslg = splitIntersections(in);
-        List<Point> pts = pslg.getPoints();
+        FlatPointList pts = pslg.points;
 
         /* 2. Initial Delaunay of all points. */
         List<Corners> tris = DelaunayTriangulator.triangulate(pts);
@@ -83,27 +83,19 @@ public final class ConstrainedDelaunayTriangulator {
      * produced by {@link #splitIntersections}.
      */
     private static final class Pslg {
-        private final List<Point> points;
-        private final List<Constraint> segments;
+        final FlatPointList points;
+        final List<Constraint> segments;
 
-        private Pslg(List<Point> points, List<Constraint> segments) {
+        private Pslg(FlatPointList points, List<Constraint> segments) {
             this.points = points;
             this.segments = segments;
-        }
-
-        private List<Point> getPoints() {
-            return points;
-        }
-
-        private List<Constraint> getSegments() {
-            return segments;
         }
     }
 
     private static Pslg splitIntersections(TriangleMesherInput2 in) {
         /* Growable working copy: intersection points are appended as crossings
            are resolved (the input store must not be mutated). */
-        List<Point> pts = new ArrayList<>(in.getPoints());
+        FlatPointList pts = FlatPointList.copyOf(in.getPoints());
         List<Constraint> segs = new ArrayList<>(in.getSegments());
 
         /* (a) Two segments cross: split both at their intersection point, and
@@ -131,9 +123,7 @@ public final class ConstrainedDelaunayTriangulator {
                     }
                     if (cross(pts, a.getA(), a.getB(), b.getA(), b.getB())) {
                         Point intersection = intersection(pts, a.getA(), a.getB(), b.getA(), b.getB());
-                        pts.add(intersection);
-                        int size = pts.size();
-                        int c = size - 1;
+                        int c = pts.add(intersection.getX(), intersection.getY());
                         segs.set(i, new Constraint(a.getA(), c, a.getMarker()));
                         segs.set(j, new Constraint(b.getA(), c, b.getMarker()));
                         segs.add(new Constraint(c, a.getB(), a.getMarker()));
@@ -160,15 +150,14 @@ public final class ConstrainedDelaunayTriangulator {
             Constraint s = segs.get(i);
             int a = s.getA();
             int b = s.getB();
-            Point ptA = pts.get(a);
-            Point ptB = pts.get(b);
-            double abx = ptB.getX() - ptA.getX();
-            double aby = ptB.getY() - ptA.getY();
+            double ax = pts.x(a);
+            double ay = pts.y(a);
+            double abx = pts.x(b) - ax;
+            double aby = pts.y(b) - ay;
             List<Integer> chain = null;
             for (int v = 0; v < pts.size(); v++) {
-                Point pv = pts.get(v);
-                if (pv.getX() < box[4 * i] || pv.getX() > box[4 * i + 1]
-                        || pv.getY() < box[4 * i + 2] || pv.getY() > box[4 * i + 3]) {
+                if (pts.x(v) < box[4 * i] || pts.x(v) > box[4 * i + 1]
+                        || pts.y(v) < box[4 * i + 2] || pts.y(v) > box[4 * i + 3]) {
                     continue;                       /* outside the closed box: not on it */
                 }
                 if (v != a && v != b && onSegmentInterior(pts, a, b, v)) {
@@ -183,10 +172,8 @@ public final class ConstrainedDelaunayTriangulator {
             }
             /* Order by the projection along a->b (all collinear, so this is the
                true order along the segment). */
-            chain.sort(Comparator.comparingDouble(v -> {
-                Point pv = pts.get(v);
-                return (pv.getX() - ptA.getX()) * abx + (pv.getY() - ptA.getY()) * aby;
-            }));
+            chain.sort(Comparator.comparingDouble(
+                    v -> (pts.x(v) - ax) * abx + (pts.y(v) - ay) * aby));
             int prev = a;
             for (int v : chain) {
                 if (prev == a) {
@@ -207,54 +194,44 @@ public final class ConstrainedDelaunayTriangulator {
     }
 
     /** Closed bounding boxes per segment: {minX, maxX, minY, maxY} at 4i. */
-    private static double[] segmentBoxes(List<Point> pts, List<Constraint> segs) {
+    private static double[] segmentBoxes(FlatPointList pts, List<Constraint> segs) {
         double[] box = new double[4 * segs.size()];
         for (int i = 0; i < segs.size(); i++) {
-            Point a = pts.get(segs.get(i).getA());
-            Point b = pts.get(segs.get(i).getB());
-            box[4 * i] = Math.min(a.getX(), b.getX());
-            box[4 * i + 1] = Math.max(a.getX(), b.getX());
-            box[4 * i + 2] = Math.min(a.getY(), b.getY());
-            box[4 * i + 3] = Math.max(a.getY(), b.getY());
+            int a = segs.get(i).getA();
+            int b = segs.get(i).getB();
+            box[4 * i] = Math.min(pts.x(a), pts.x(b));
+            box[4 * i + 1] = Math.max(pts.x(a), pts.x(b));
+            box[4 * i + 2] = Math.min(pts.y(a), pts.y(b));
+            box[4 * i + 3] = Math.max(pts.y(a), pts.y(b));
         }
         return box;
     }
 
     /** True if vertex v is exactly collinear with (a,b) and strictly between them. */
-    private static boolean onSegmentInterior(List<Point> pts, int a, int b, int v) {
+    private static boolean onSegmentInterior(FlatPointList pts, int a, int b, int v) {
         if (orient(pts, a, b, v) != 0) {
             return false;
         }
-        Point ptA = pts.get(a);
-        Point ptB = pts.get(b);
-        Point ptV = pts.get(v);
-        double pax = ptA.getX();
-        double pay = ptA.getY();
-        double pbx = ptB.getX();
-        double pby = ptB.getY();
-        double pvx = ptV.getX();
-        double pvy = ptV.getY();
+        double pax = pts.x(a);
+        double pay = pts.y(a);
+        double pbx = pts.x(b);
+        double pby = pts.y(b);
+        double pvx = pts.x(v);
+        double pvy = pts.y(v);
         double toA = (pvx - pax) * (pbx - pax) + (pvy - pay) * (pby - pay);
         double toB = (pvx - pbx) * (pax - pbx) + (pvy - pby) * (pay - pby);
         return toA > 0 && toB > 0;            /* strictly inside, not at an endpoint */
     }
 
-    private static Point intersection(List<Point> pts, int p0, int p1, int q0, int q1) {
-        Point pt0 = pts.get(p0);
-        double x1 = pt0.getX();
-        double y1 = pt0.getY();
-
-        Point pt1 = pts.get(p1);
-        double x2 = pt1.getX();
-        double y2 = pt1.getY();
-
-        Point pt2 = pts.get(q0);
-        double x3 = pt2.getX();
-        double y3 = pt2.getY();
-
-        Point pt3 = pts.get(q1);
-        double x4 = pt3.getX();
-        double y4 = pt3.getY();
+    private static Point intersection(FlatPointList pts, int p0, int p1, int q0, int q1) {
+        double x1 = pts.x(p0);
+        double y1 = pts.y(p0);
+        double x2 = pts.x(p1);
+        double y2 = pts.y(p1);
+        double x3 = pts.x(q0);
+        double y3 = pts.y(q0);
+        double x4 = pts.x(q1);
+        double y4 = pts.y(q1);
 
         double den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
         double t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
@@ -274,7 +251,7 @@ public final class ConstrainedDelaunayTriangulator {
      */
     private static final class CdtMesh {
 
-        private final List<Point> pts;
+        private final FlatPointList pts;
         private final int nt;
         private final int[] cor;          /* 3 corner vertex indices per triangle */
         private final int[] nbr;          /* 3 neighbour triangle ids per triangle, -1 on a boundary */
@@ -283,7 +260,7 @@ public final class ConstrainedDelaunayTriangulator {
            Delaunay-restoration loop probes it once per popped edge. */
         private final LongOpenHashSet segSet = new LongOpenHashSet(64, Hash.FAST_LOAD_FACTOR);
 
-        CdtMesh(List<Point> pts, List<Corners> tris) {
+        CdtMesh(FlatPointList pts, List<Corners> tris) {
             this.pts = pts;
             this.nt = tris.size();
             cor = new int[3 * nt];
@@ -596,7 +573,8 @@ public final class ConstrainedDelaunayTriangulator {
                 }
                 int p = cor[3 * t + j];
                 int q = apex(nb, u, v);
-                if (Geometry.inCircle(pts, cor[3 * t], cor[3 * t + 1], cor[3 * t + 2], pts.get(q))
+                if (Geometry.inCircle(pts, cor[3 * t], cor[3 * t + 1], cor[3 * t + 2],
+                        pts.x(q), pts.y(q))
                         && convex(pts, u, v, p, q)) {
                     flip(t, nb, u, v, p, q);
                     for (int k = 0; k < 3; k++) {
@@ -707,15 +685,17 @@ public final class ConstrainedDelaunayTriangulator {
                         attr != null ? attr[i] : 0.0));
             }
 
-            /* The PSLG is single-use (discarded after this), so the output adopts its
-               point store and recovered subsegment list directly rather than copying. */
-            return new TriangleMesherOutput2(pslg.points, TriangleUtils.compact(slots), pslg.segments, attr != null);
+            /* The flat point store is materialized to the modelled List<Point> form
+               here, at the phase boundary; the recovered subsegment list is adopted
+               directly (the PSLG is single-use). */
+            return new TriangleMesherOutput2(pslg.points.toPointList(),
+                    TriangleUtils.compact(slots), pslg.segments, attr != null);
         }
     }
 
     /* --- geometry helpers ---------------------------------------------------- */
 
-    private static boolean cross(List<Point> pts, int u, int v, int a, int b) {
+    private static boolean cross(FlatPointList pts, int u, int v, int a, int b) {
         int d1 = orient(pts, a, b, u);
         int d2 = orient(pts, a, b, v);
         int d3 = orient(pts, u, v, a);
@@ -723,13 +703,13 @@ public final class ConstrainedDelaunayTriangulator {
         return d1 * d2 < 0 && d3 * d4 < 0;
     }
 
-    private static boolean convex(List<Point> pts, int u, int v, int p, int q) {
+    private static boolean convex(FlatPointList pts, int u, int v, int p, int q) {
         return orient(pts, p, q, u) * orient(pts, p, q, v) < 0;
     }
 
     /** Orientation of (a, b, c) - the single orientation entry the
-        construction-phase code shares, over the working vertex list. */
-    private static int orient(List<Point> pts, int a, int b, int c) {
+        construction-phase code shares, over the working vertex store. */
+    private static int orient(FlatPointList pts, int a, int b, int c) {
         return Geometry.orient2d(pts, a, b, c);
     }
 

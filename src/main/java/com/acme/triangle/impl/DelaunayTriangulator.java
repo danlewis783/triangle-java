@@ -41,6 +41,11 @@ public final class DelaunayTriangulator {
      *         points (a fresh, mutable list the caller may refine in place)
      */
     public static List<Corners> triangulate(List<Point> points) {
+        return triangulate(FlatPointList.copyOf(points));
+    }
+
+    /** {@link #triangulate(List)} over the mesher's internal flat vertex store. */
+    static List<Corners> triangulate(FlatPointList points) {
         if (points.size() < 3) {
             throw new IllegalArgumentException("need at least 3 points");
         }
@@ -89,20 +94,17 @@ public final class DelaunayTriangulator {
         private final int[] fanAsW;
         private final int[] fanAsWGen;
 
-        Builder(List<Point> pts) {
+        Builder(FlatPointList pts) {
             this.n = pts.size();                     /* input count, before the super-triangle vertices */
-            /* Read the input coordinates once into a flat interleaved array. The hot
-               inCircle/orient tests then load a primitive array (xy[2i]) rather than
-               chasing a List<Point> reference and two field loads per corner. Three
-               super-triangle vertices are appended below and no others are ever added
-               (the initial Delaunay inserts only existing input points), so this is
-               sized exactly for n+3 and never grows. Internal only: the triangulate()
-               contract still speaks List<Point>. */
+            /* Copy the input coordinates once into a local flat array: three
+               super-triangle vertices are appended below and no others are ever
+               added (the initial Delaunay inserts only existing input points), so
+               this is sized exactly for n+3 and never grows - and the shared
+               input store stays untouched. */
             this.xy = new double[2 * (n + 3)];
             for (int i = 0; i < n; i++) {
-                Point p = pts.get(i);
-                xy[2 * i] = p.getX();
-                xy[2 * i + 1] = p.getY();
+                xy[2 * i] = pts.x(i);
+                xy[2 * i + 1] = pts.y(i);
             }
             this.size = n;
             cavityGen = new int[16];

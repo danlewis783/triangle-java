@@ -47,7 +47,7 @@ import java.util.List;
  */
 final class IncrementalCdt {
 
-    private final List<Point> points = new ArrayList<>(); /* coordinates per vertex */
+    private final FlatPointList points;                   /* coordinates per vertex */
     private final List<Provenance> provenances = new ArrayList<>();  /* identity per vertex */
     private final List<@Nullable Triangle> tris = new ArrayList<>();    /* one cell per slot; null if dead */
     private final boolean haveAttr;                           /* whether triangles carry a region attribute */
@@ -131,10 +131,10 @@ final class IncrementalCdt {
         lensFactor = (2.0 * g - 1.0) * (2.0 * g - 1.0);
         /* Adopt the modelled stores the CDT just built and handed over (it is a
            transient, used by nobody else): the modelled point list seeds the
-           mesh's growable vertex store, and the triangles already carry compacted
-           neighbour links, so construction relinks nothing - no from-scratch
-           adjacency rebuild. */
-        points.addAll(base.getPoints());
+           mesh's growable flat vertex store, and the triangles already carry
+           compacted neighbour links, so construction relinks nothing - no
+           from-scratch adjacency rebuild. */
+        points = FlatPointList.copyOf(base.getPoints());
         for (int i = 0; i < points.size(); i++) {
             provenances.add(new Provenance(VertexType.INPUT, -1, -1));
         }
@@ -170,11 +170,12 @@ final class IncrementalCdt {
     }
 
     /* Live views for the refinement loop, so it reads the mesh in place rather
-       than snapshotting it every iteration. With maintained adjacency these lists
-       are mutated in place (slots reused/nulled), so the references are stable;
-       dead triangles appear as null and scanning consumers must skip them. */
+       than snapshotting it every iteration. With maintained adjacency these
+       stores are mutated in place (slots reused/nulled), so the references are
+       stable; dead triangles appear as null and scanning consumers must skip
+       them. */
 
-    List<Point> pointsView() {
+    FlatPointList points() {
         return points;
     }
 
@@ -220,8 +221,7 @@ final class IncrementalCdt {
         if (start < 0) {
             throw new IllegalArgumentException("point is not inside the domain");
         }
-        points.add(p);
-        int pIdx = points.size() - 1;
+        int pIdx = points.add(p.getX(), p.getY());
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
         insertViaCavity(pIdx, new int[]{start}, -1L);
         return pIdx;
@@ -243,13 +243,12 @@ final class IncrementalCdt {
      * @return {@code -1} if {@code p} was inserted; otherwise the index of a
      *         subsegment {@code p} encroaches, for the caller to split instead
      */
-    int insertInteriorOrEncroachedSegment(Point p, int seedTriangle) {
-        int encroached = gatherCavity(p, new int[]{seedTriangle}, -1L, true);
+    int insertInteriorOrEncroachedSegment(double px, double py, int seedTriangle) {
+        int encroached = gatherCavity(px, py, new int[]{seedTriangle}, -1L, true);
         if (encroached >= 0) {
             return encroached;                  /* p encroaches a subsegment; do not insert */
         }
-        points.add(p);
-        int pIdx = points.size() - 1;
+        int pIdx = points.add(px, py);
         provenances.add(new Provenance(VertexType.FREE, -1, -1));
         commitCavity(pIdx);
         return -1;
@@ -281,15 +280,11 @@ final class IncrementalCdt {
             throw new IllegalStateException("segment (" + a + "," + b + ") is not an edge");
         }
         double frac = shellSplitFraction(a, b);
-        Point ptA = points.get(a);
-        Point ptB = points.get(b);
-        double ax = ptA.getX();
-        double ay = ptA.getY();
-        double bx = ptB.getX();
-        double by = ptB.getY();
-        Point newPt = new Point(ax + frac * (bx - ax), ay + frac * (by - ay));
-        points.add(newPt);
-        int mIdx = points.size() - 1;
+        double ax = points.x(a);
+        double ay = points.y(a);
+        double bx = points.x(b);
+        double by = points.y(b);
+        int mIdx = points.add(ax + frac * (bx - ax), ay + frac * (by - ay));
         provenances.add(new Provenance(VertexType.SEGMENT, origOrg, origDest));
 
         segTri.remove(key(a, b));            /* let the cavity span the old segment */
@@ -364,25 +359,25 @@ final class IncrementalCdt {
      * would form a degenerate triangle); pass {@code -1L} for none.
      */
     private void insertViaCavity(int pIdx, int[] seeds, long skipEdgeKey) {
-        gatherCavity(points.get(pIdx), seeds, skipEdgeKey, false);
+        gatherCavity(points.x(pIdx), points.y(pIdx), seeds, skipEdgeKey, false);
         commitCavity(pIdx);
     }
 
     /**
-     * Gather the constrained Bowyer-Watson cavity for point {@code p} (raw coords,
-     * not yet a vertex), seeded from {@code seeds}: walk the maintained neighbour
-     * links collecting every triangle whose circumcircle contains {@code p} - never
-     * crossing a current segment. The cavity slots are collected into
-     * {@link #cavityScratch} and its boundary edges (outer neighbour + region
-     * attribute) into {@link #fanScratch}, skipping {@code skipEdgeKey}.
-     * Read-only: no slot is freed, so an encroachment result can abort the
-     * insertion with nothing to roll back.
+     * Gather the constrained Bowyer-Watson cavity for the point {@code (px, py)}
+     * (raw coords, not necessarily a vertex yet), seeded from {@code seeds}: walk
+     * the maintained neighbour links collecting every triangle whose circumcircle
+     * contains the point - never crossing a current segment. The cavity slots are
+     * collected into {@link #cavityScratch} and its boundary edges (outer
+     * neighbour + region attribute) into {@link #fanScratch}, skipping
+     * {@code skipEdgeKey}. Read-only: no slot is freed, so an encroachment result
+     * can abort the insertion with nothing to roll back.
      *
      * @return when {@code checkEncroach}, the index of a boundary subsegment whose
-     *         diametral lens contains {@code p} (so {@code p} encroaches it), or
-     *         {@code -1} for none; always {@code -1} when not checking
+     *         diametral lens contains the point (so it encroaches), or {@code -1}
+     *         for none; always {@code -1} when not checking
      */
-    private int gatherCavity(Point p, int[] seeds, long skipEdgeKey,
+    private int gatherCavity(double px, double py, int[] seeds, long skipEdgeKey,
                              boolean checkEncroach) {
         gen++;
         IntArrayList cavity = cavityScratch;
@@ -409,7 +404,7 @@ final class IncrementalCdt {
                 if (segIndexByEdge.containsKey(key(u, w))) {
                     continue;                       /* never cross a segment */
                 }
-                if (inCircle(tris.get(nb), p)) {
+                if (inCircle(tris.get(nb), px, py)) {
                     cavityGen[nb] = gen;
                     flood.push(nb);
                 }
@@ -443,8 +438,8 @@ final class IncrementalCdt {
                        carved domain is segment-bounded, and across an interior
                        edge the circumcircle containment propagates. */
                     if (checkEncroach && encroached < 0 && segment
-                            && (inDiametralLens(u, w, p)
-                                || orientXY(u, w, p.getX(), p.getY()) <= 0)) {
+                            && (inDiametralLens(u, w, px, py)
+                                || orientXY(u, w, px, py) <= 0)) {
                         encroached = segIndex;
                     }
                 }
@@ -646,19 +641,17 @@ final class IncrementalCdt {
     /** Whether vertex {@code p} encroaches subsegment {@code (a,b)}: p lies in
         its diametral lens (see {@link #lensFactor}). */
     private boolean inDiametralLens(int a, int b, int p) {
-        return inDiametralLens(a, b, points.get(p));
+        return inDiametralLens(a, b, points.x(p), points.y(p));
     }
 
-    /** Whether the loose point {@code p} (a candidate vertex) lies in the
+    /** Whether the loose point {@code (px, py)} (a candidate vertex) lies in the
         diametral lens of subsegment {@code (a,b)} - so inserting it would
         encroach. */
-    private boolean inDiametralLens(int a, int b, Point p) {
-        Point ptA = points.get(a);
-        Point ptB = points.get(b);
-        double dax = ptA.getX() - p.getX();
-        double day = ptA.getY() - p.getY();
-        double dbx = ptB.getX() - p.getX();
-        double dby = ptB.getY() - p.getY();
+    private boolean inDiametralLens(int a, int b, double px, double py) {
+        double dax = points.x(a) - px;
+        double day = points.y(a) - py;
+        double dbx = points.x(b) - px;
+        double dby = points.y(b) - py;
         double dot = dax * dbx + day * dby;
         if (dot >= 0.0) {
             return false;                       /* apex angle not even obtuse */
@@ -677,9 +670,10 @@ final class IncrementalCdt {
             outSegments.add(new Constraint(sg.a, sg.b, sg.marker));
         }
 
-        /* A fresh, tight copy of the live coordinates - the mesh keeps its own
-           growable store rather than handing out its mutable internals. */
-        return new TriangleMesherOutput2(points, outTriangles, outSegments.build(), haveAttr);
+        /* The flat store materialized to the modelled List<Point> form - the mesh
+           keeps its own growable store rather than handing out its internals. */
+        return new TriangleMesherOutput2(points.toPointList(), outTriangles,
+                outSegments.build(), haveAttr);
     }
 
     /**
@@ -727,11 +721,8 @@ final class IncrementalCdt {
             int a = t.getA();
             int b = t.getB();
             int c = t.getC();
-            Point ptA = points.get(a);
-            Point ptB = points.get(b);
-            Point ptC = points.get(c);
-            double area = Math.abs((ptB.getX() - ptA.getX()) * (ptC.getY() - ptA.getY())
-                    - (ptB.getY() - ptA.getY()) * (ptC.getX() - ptA.getX())) / 2.0;
+            double area = Math.abs((points.x(b) - points.x(a)) * (points.y(c) - points.y(a))
+                    - (points.y(b) - points.y(a)) * (points.x(c) - points.x(a))) / 2.0;
             if (area > bestArea) {
                 bestArea = area;
                 best = i;
@@ -741,11 +732,8 @@ final class IncrementalCdt {
         int a = t.getA();
         int b = t.getB();
         int c = t.getC();
-        Point ptA = points.get(a);
-        Point ptB = points.get(b);
-        Point ptC = points.get(c);
-        double cx = (ptA.getX() + ptB.getX() + ptC.getX()) / 3.0;
-        double cy = (ptA.getY() + ptB.getY() + ptC.getY()) / 3.0;
+        double cx = (points.x(a) + points.x(b) + points.x(c)) / 3.0;
+        double cy = (points.y(a) + points.y(b) + points.y(c)) / 3.0;
         return new Point(cx, cy);
     }
 
@@ -777,8 +765,8 @@ final class IncrementalCdt {
         return -1;
     }
 
-    private boolean inCircle(Triangle t, Point p) {
-        return Geometry.inCircle(points, t.getA(), t.getB(), t.getC(), p);
+    private boolean inCircle(Triangle t, double px, double py) {
+        return Geometry.inCircle(points, t.getA(), t.getB(), t.getC(), px, py);
     }
 
     private int orientXY(int a, int b, double x, double y) {
@@ -786,11 +774,7 @@ final class IncrementalCdt {
     }
 
     private double dist2(int a, int b) {
-        Point ptA = points.get(a);
-        Point ptB = points.get(b);
-        double dx = ptA.getX() - ptB.getX();
-        double dy = ptA.getY() - ptB.getY();
-        return dx * dx + dy * dy;
+        return points.dist2(a, b);
     }
 
     private static long key(int a, int b) {
