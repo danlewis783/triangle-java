@@ -33,6 +33,8 @@ public final class DelaunayTriangulator {
     }
 
     /**
+     * Delaunay-triangulates the input points.
+     *
      * @param points the input vertex store; indices {@code 0..size-1} address it
      * @return the Delaunay triangles as CCW {@link Corners} over the input
      *         points (a fresh, mutable list the caller may refine in place)

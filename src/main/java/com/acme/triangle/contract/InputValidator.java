@@ -31,7 +31,7 @@ public final class InputValidator {
     private InputValidator() {
     }
 
-    /** @return the list of input-contract violations; empty if the input is valid. */
+    /** Returns the list of input-contract violations; empty if the input is valid. */
     public static List<String> validate(TriangleMesherInput in) {
         List<String> v = new ArrayList<>();
         checkCounts(in, v);

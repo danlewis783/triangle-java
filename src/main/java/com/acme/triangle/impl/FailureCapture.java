@@ -6,8 +6,9 @@ import com.acme.triangle.TriangleMesherInput;
 import com.acme.triangle.io.TriangleJson;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -28,6 +29,8 @@ public final class FailureCapture {
     static final String ENABLED_PROPERTY = "triangle.captureFailures";
 
     private static final AtomicLong SEQUENCE = new AtomicLong();
+    private static final DateTimeFormatter TIMESTAMP =
+            DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS");
 
     private FailureCapture() {
     }
@@ -68,7 +71,7 @@ public final class FailureCapture {
         the capture is missing (never throws). */
     private static String capture(TriangleMesherInput input) {
         try {
-            String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS").format(new Date());
+            String timestamp = TIMESTAMP.format(LocalDateTime.now(ZoneId.systemDefault()));
             String baseName = timestamp + "-" + SEQUENCE.incrementAndGet() + "-failure";
             Path path = captureDir().resolve(baseName + "-input.json");
             TriangleJson.writeInput(path, input, baseName);

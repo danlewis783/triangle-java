@@ -56,6 +56,7 @@ testing {
 // against a temp directory to test the capture itself.
 tasks.withType<Test>().configureEach {
     systemProperty("triangle.captureFailures", "false")
+    jvmArgs("--enable-native-access=ALL-UNNAMED")   // JNA's System.load, JDK 22+
 }
 
 tasks.register<JavaExec>("bench") {
@@ -115,24 +116,27 @@ tasks.register<JavaExec>("jmh") {
 }
 
 java {
-    // Compile with 17 (Error Prone/NullAway need a >=11 compiler to run) but keep
+    // Compile with 25 (Error Prone needs a >=21 compiler to run) but keep
     // emitting Java 8 bytecode via release below, so the artifact stays Java 8.
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(17))
+        languageVersion.set(JavaLanguageVersion.of(25))
     }
 }
 
+// Error Prone's default checks run on every source set. NullAway is off here and
+// enabled for main below.
 tasks.withType<JavaCompile>().configureEach {
     options.release.set(8)
-    options.errorprone.enabled.set(false)   // off everywhere; enabled for main below
+    options.compilerArgs.add("-Xlint:-options")   // JDK 25 flags release 8 as obsolete
+    options.errorprone {
+        disable("NullAway")
+        excludedPaths.set(".*[/\\\\]build[/\\\\]generated[/\\\\].*")   // JMH harness code
+    }
 }
 
-// NullAway only (not the rest of Error Prone), over the project's packages, main
-// sources only - this is a nullness audit, not a general lint pass.
+// NullAway over the project's packages, main sources only - a nullness audit.
 tasks.named<JavaCompile>("compileJava") {
     options.errorprone {
-        enabled.set(true)
-        disableAllChecks.set(true)
         check("NullAway", CheckSeverity.ERROR)
         option("NullAway:AnnotatedPackages", "com.acme.triangle")
     }

@@ -26,11 +26,10 @@ import java.math.BigDecimal;
 public final class Predicates {
 
     /**
-     * Machine epsilon (2<sup>-53</sup>) and the resulting static error bounds,
+     * Static error bounds derived from machine epsilon (2<sup>-53</sup>),
      * computed the way Shewchuk's {@code exactinit} does so they match the host
      * floating-point rounding rather than being hard-coded.
      */
-    private static final double EPSILON;
     private static final double CCW_ERRBOUND_A;
     private static final double ICC_ERRBOUND_A;
 
@@ -44,7 +43,6 @@ public final class Predicates {
             epsilon *= half;
             check = 1.0 + epsilon;
         } while (check != 1.0 && check != lastCheck);
-        EPSILON = epsilon;
         CCW_ERRBOUND_A = (3.0 + 16.0 * epsilon) * epsilon;
         ICC_ERRBOUND_A = (10.0 + 96.0 * epsilon) * epsilon;
     }

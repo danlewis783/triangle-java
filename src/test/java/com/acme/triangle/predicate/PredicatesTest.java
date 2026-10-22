@@ -33,7 +33,7 @@ class PredicatesTest {
             if (s.isEmpty() || s.startsWith("#")) {
                 continue;
             }
-            String[] t = s.split("\\s+");
+            String[] t = s.split("\\s+", -1);   // s is trimmed: no edge empties
             String kind = t[0];
             final int lineNo = line;
 

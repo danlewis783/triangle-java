@@ -6,8 +6,9 @@ import com.acme.triangle.TriangleMesherOutput;
 import com.acme.triangle.io.TriangleJson;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -27,6 +28,8 @@ public final class CapturingTriangleMesher implements TriangleMesher {
     static final String CAPTURE_DIR_PROPERTY = "triangle.captureDir";
 
     private static final AtomicLong SEQUENCE = new AtomicLong();
+    private static final DateTimeFormatter TIMESTAMP =
+            DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS");
 
     private final TriangleMesher delegate;
     private final boolean enabled;
@@ -53,7 +56,7 @@ public final class CapturingTriangleMesher implements TriangleMesher {
     }
 
     private String nextBaseName() {
-        String timestamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS").format(new Date());
+        String timestamp = TIMESTAMP.format(LocalDateTime.now(ZoneId.systemDefault()));
         return timestamp + "-" + pad(SEQUENCE.incrementAndGet()) + "-" + mesherName;
     }
 

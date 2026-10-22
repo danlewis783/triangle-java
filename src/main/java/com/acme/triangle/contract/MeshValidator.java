@@ -45,7 +45,7 @@ public final class MeshValidator {
     private MeshValidator() {
     }
 
-    /** @return the list of contract violations; empty if the mesh is valid. */
+    /** Returns the list of contract violations; empty if the mesh is valid. */
     public static List<String> validate(TriangleMesherOutput o,
                                         TriangleMesherInput in) {
         List<String> v = new ArrayList<>();

@@ -12,6 +12,8 @@ import java.util.List;
 public interface DivergenceHandler {
 
     /**
+     * Called when the primary mesh fails contract validation.
+     *
      * @param input              the input both meshers were given
      * @param primaryViolations  contract violations of the primary mesh (non-empty)
      * @param referenceViolations contract violations of the reference mesh
