@@ -1,0 +1,34 @@
+package com.example.placeholder.triangle.impl;
+
+import com.example.placeholder.triangle.MeshContractException;
+import com.example.placeholder.triangle.TriangleMesher;
+import com.example.placeholder.triangle.TriangleMesherInput;
+import com.example.placeholder.triangle.TriangleMesherOutput;
+import com.example.placeholder.triangle.contract.MeshValidator;
+import java.util.List;
+
+/**
+ * Decorator that validates the wrapped mesher's output against the structural
+ * contract and throws {@link MeshContractException} if it is violated. Useful as
+ * a canary around an under-development implementation; wrapping a trusted
+ * implementation is unnecessary.
+ */
+public final class ValidatingTriangleMesher implements TriangleMesher {
+
+    private final TriangleMesher delegate;
+
+    public ValidatingTriangleMesher(TriangleMesher delegate) {
+        this.delegate = delegate;
+    }
+
+    @Override
+    public TriangleMesherOutput mesh(TriangleMesherInput input) {
+        TriangleMesherOutput out = delegate.mesh(input);
+        List<String> violations = MeshValidator.validate(out, input);
+        if (!violations.isEmpty()) {
+            throw FailureCapture.annotate(input, new MeshContractException(
+                    "mesh violates the structural contract", violations));
+        }
+        return out;
+    }
+}

@@ -10,7 +10,7 @@ design record / rationale. For making that case *fast*, see
 
 `JavaTriangleMesher` refines a constrained Delaunay mesh to a minimum-angle
 bound (and per-region max area) by Ruppert/Üngör refinement
-([JavaTriangleMesher.java](../src/main/java/com/acme/triangle/impl/JavaTriangleMesher.java)).
+([JavaTriangleMesher.java](../src/main/java/com/example/placeholder/triangle/impl/JavaTriangleMesher.java)).
 After slices 1–4 it is correct and fast for the **standard angle range**, but it
 **fails to terminate** on a real captured input:
 `src/bench/resources/inputs/regression/rectangle-solid-with-hole.json` — a 2×1
@@ -76,7 +76,7 @@ of ever-thinner slivers. Without it, splitting one segment encroaches its
 neighbour, whose split encroaches the first, forever.
 
 We currently always split at the midpoint
-([IncrementalCdt.splitSegment](../src/main/java/com/acme/triangle/impl/IncrementalCdt.java)).
+([IncrementalCdt.splitSegment](../src/main/java/com/example/placeholder/triangle/impl/IncrementalCdt.java)).
 
 ### 2.2 The Miller–Pav–Walkington skip rule — triangle.c:4084–4143
 
@@ -137,7 +137,7 @@ adequate; no change needed here.
 ## 3. How this sits on the current code
 
 The incremental machinery from slices 1–3
-([IncrementalCdt](../src/main/java/com/acme/triangle/impl/IncrementalCdt.java))
+([IncrementalCdt](../src/main/java/com/example/placeholder/triangle/impl/IncrementalCdt.java))
 is the right foundation. New capabilities it (or the refiner) will need:
 
 - **Vertex provenance.** Track, per vertex, whether it is a SEGMENT vertex or a

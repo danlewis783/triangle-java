@@ -62,7 +62,7 @@ tasks.withType<Test>().configureEach {
 tasks.register<JavaExec>("bench") {
     group = "verification"
     description = "Runs the mesher micro-benchmark (Java vs native)."
-    mainClass.set("com.acme.triangle.bench.MesherBenchmark")
+    mainClass.set("com.example.placeholder.triangle.bench.MesherBenchmark")
     classpath = sourceSets["bench"].runtimeClasspath
     javaLauncher.set(
         javaToolchains.launcherFor {
@@ -79,7 +79,7 @@ tasks.register<JavaExec>("bench") {
 tasks.register<JavaExec>("profile") {
     group = "verification"
     description = "Runs the java-mesher profiling loop under JFR (Java 8)."
-    mainClass.set("com.acme.triangle.bench.ProfileDriver")
+    mainClass.set("com.example.placeholder.triangle.bench.ProfileDriver")
     classpath = sourceSets["bench"].runtimeClasspath
     javaLauncher.set(
         javaToolchains.launcherFor {
@@ -138,6 +138,6 @@ tasks.withType<JavaCompile>().configureEach {
 tasks.named<JavaCompile>("compileJava") {
     options.errorprone {
         check("NullAway", CheckSeverity.ERROR)
-        option("NullAway:AnnotatedPackages", "com.acme.triangle")
+        option("NullAway:AnnotatedPackages", "com.example.placeholder.triangle")
     }
 }

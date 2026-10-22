@@ -18,7 +18,7 @@ Targets **Java 8**. Build with Gradle (`gradlew`).
 ## Quick start
 
 ```java
-import com.acme.triangle.*;
+import com.example.placeholder.triangle.*;
 
 TriangleMesherInput in = new TriangleMesherInput();
 in.pointList   = new double[]{0,0, 1,0, 1,1, 0,1};   // x0,y0,x1,y1,...
@@ -41,7 +41,7 @@ TriangleMesherOutput out = mesher.mesh(in);
 
 ## The facade
 
-The consumer depends only on the `com.acme.triangle` package:
+The consumer depends only on the `com.example.placeholder.triangle` package:
 
 - **`TriangleMesher`** — the single entry point: `mesh(input) -> output`.
 - **`TriangleMesherInput` / `TriangleMesherOutput`** — plain-data DTOs
@@ -60,7 +60,7 @@ contract; this per-triangle slot alignment is.
 ## Architecture
 
 ```
-com.acme.triangle            facade: TriangleMesher, DTOs, TriangleMeshers,
+com.example.placeholder.triangle            facade: TriangleMesher, DTOs, TriangleMeshers,
                              MeshContractException, DivergenceHandler
   .predicate                 Predicates       (robust orient2d / incircle)
   .contract                  MeshValidator    (the 6 structural invariants)
