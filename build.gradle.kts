@@ -3,7 +3,7 @@ import net.ltgt.gradle.errorprone.errorprone
 
 plugins {
     java
-    id("net.ltgt.errorprone") version "4.0.1"
+    id("net.ltgt.errorprone") version "5.1.1"
 }
 
 repositories {
@@ -124,14 +124,14 @@ java {
 
 tasks.withType<JavaCompile>().configureEach {
     options.release.set(8)
-    options.errorprone.isEnabled.set(false)   // off everywhere; enabled for main below
+    options.errorprone.enabled.set(false)   // off everywhere; enabled for main below
 }
 
 // NullAway only (not the rest of Error Prone), over the project's packages, main
 // sources only - this is a nullness audit, not a general lint pass.
 tasks.named<JavaCompile>("compileJava") {
     options.errorprone {
-        isEnabled.set(true)
+        enabled.set(true)
         disableAllChecks.set(true)
         check("NullAway", CheckSeverity.ERROR)
         option("NullAway:AnnotatedPackages", "com.acme.triangle")

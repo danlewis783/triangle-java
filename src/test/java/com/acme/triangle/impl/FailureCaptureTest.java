@@ -82,7 +82,7 @@ class FailureCaptureTest {
         TriangleMesher m = TriangleMeshers.validating(BAD);
 
         MeshContractException e =
-                catchThrowableOfType(() -> m.mesh(square()), MeshContractException.class);
+                catchThrowableOfType(MeshContractException.class, () -> m.mesh(square()));
 
         assertThat(e.getMessage()).contains("[input captured: ");
         assertThat(e.capturePath()).isNotNull();
@@ -99,7 +99,7 @@ class FailureCaptureTest {
         in.segmentList[1] = 99;                      /* out-of-range endpoint */
 
         MeshInputException e = catchThrowableOfType(
-                () -> TriangleMeshers.javaMesher().mesh(in), MeshInputException.class);
+                MeshInputException.class, () -> TriangleMeshers.javaMesher().mesh(in));
 
         assertThat(e.getMessage()).contains("[input captured: ");
         assertThat(Paths.get(e.capturePath())).exists();
